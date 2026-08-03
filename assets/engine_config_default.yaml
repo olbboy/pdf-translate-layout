@@ -1,0 +1,49 @@
+# Engine policy defaults — snapshot vào job.yaml lúc tạo job (spec §14).
+languages:
+  source: en
+  target: vi
+
+unicode:
+  normalization: NFC
+  punctuation_map_version: en-vi-v1
+  # Width-variant punctuation allowlist; chỉ áp ngoài protected tokens (spec §6.6).
+  punctuation_map:
+    "，": ", "   # ，
+    "：": ": "   # ：
+    "；": "; "   # ；
+    "（": " ("   # （
+    "）": ") "   # ）
+    "、": ", "   # 、
+    "。": ". "   # 。
+
+fonts:
+  pack: noto-v1
+  reuse_source_font: false      # v1 skeleton: luôn map sang bundle (conservative theo §7.3)
+  subset: true
+  minimum_ratio: 0.85           # hard floor §8.2
+  review_below_ratio: 0.95
+
+render:
+  pymupdf_version: "1.27.2.3"
+  preserve_links: true
+  mask_pad_ratio: 0.15          # pad = clamp(ratio*font_size, min, max) — PDF user units
+  mask_pad_min_pt: 0.3
+  mask_pad_max_pt: 1.0
+
+qa:
+  render_dpi: 300
+  flagged_render_dpi: 600
+  small_text_pt: 6.0            # trang có text nhỏ hơn → render 600 DPI
+  diff_tile_px: 24
+  diff_pixel_delta: 24          # chênh lệch kênh màu coi là khác
+  diff_tile_fraction: 0.02      # tỷ lệ pixel khác để flag tile
+  mask_halo_pt: 1.5
+  output_size_budget_ratio: 3.0
+
+policy:
+  require_domain_context: false # --customer-facing bật true (blocking)
+
+translation:
+  batch_max_regions: 20
+  provider_model_version: claude-in-session
+  prompt_version: req-v1

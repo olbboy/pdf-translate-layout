@@ -1,0 +1,6 @@
+# PyMuPDF pinned: redaction/subsetting behavior is integration-tested per version
+# (see SKILL.md §8). Bump only together with a golden-test rerun.
+pymupdf==1.27.2.3
+PyYAML>=6.0
+numpy>=1.24
+Pillow>=10.0

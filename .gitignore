@@ -1,0 +1,17 @@
+# Job folders chứa nội dung tài liệu của người dùng — không bao giờ commit
+jobs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Job runtime
+*.lock
+.lock
+*.tmp

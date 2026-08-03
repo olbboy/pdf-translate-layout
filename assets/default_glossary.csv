@@ -1,0 +1,47 @@
+term,type,target,note
+Pytes,keep,,brand
+V16 Lite,keep,,product
+V16,keep,,product
+Victron,keep,,inverter brand
+SUNSYNK,keep,,inverter brand
+TBB,keep,,inverter brand
+Voltronic,keep,,inverter brand
+Deye,keep,,inverter brand
+Solis,keep,,inverter brand
+Growatt,keep,,inverter brand
+Goodwe,keep,,inverter brand
+SOLAX,keep,,inverter brand
+SUNGROW,keep,,inverter brand
+Seletronic,keep,,inverter brand
+Studer,keep,,inverter brand
+Afore,keep,,inverter brand
+MUST,keep,,inverter brand
+Anern,keep,,inverter brand
+Ingeteam,keep,,inverter brand
+Phocos,keep,,inverter brand
+Megarevo,keep,,inverter brand
+AP System,keep,,inverter brand
+Senergy,keep,,inverter brand
+INHENERGY,keep,,inverter brand
+SRNE,keep,,inverter brand
+Aiswei,keep,,inverter brand
+Solplante,keep,,inverter brand
+ISUNA,keep,,inverter brand
+Sinexcel,keep,,inverter brand
+Luxpower,keep,,inverter brand
+Hoymiles,keep,,inverter brand
+Livoltek,keep,,inverter brand
+Sol-Ark,keep,,inverter brand
+SAJ,keep,,inverter brand
+SMA,keep,,inverter brand
+Epever,keep,,inverter brand
+RS485,keep,,protocol
+CAN,keep,,protocol
+BMS,keep,,term
+DIP,keep,,term
+SOC,keep,,term
+AWG,keep,,unit
+LED,keep,,term
+battery,prefer,pin,không dùng "ắc quy" trừ khi trích dẫn
+inverter,prefer,biến tần,giữ "Inverter" lần đầu nếu cần
+wall-mounted bracket,prefer,giá treo tường,
