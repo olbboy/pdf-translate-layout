@@ -111,7 +111,10 @@ def main() -> None:
                                f"approver={args.approver} waived={sorted(waivers)}")
                 job.set_status("RELEASED")
             else:
-                raise BlockingError(f"status {job.status()} không thể approve")
+                raise BlockingError(
+                    f"status {job.status()} không thể approve — cần NEEDS_REVIEW/AUTO_QA_PASS. "
+                    "Nếu vừa chạy lại validate: chạy tiếp fit_paint.py rồi qa_gates.py "
+                    "(validate luôn hạ về TRANSLATED vì render cũ không còn được đảm bảo khớp).")
             out = job.p("output", "translated-approved.pdf")
             shutil.copyfile(job.p("render", "draft.pdf"), out)
             job.mark_stage(STAGE)
