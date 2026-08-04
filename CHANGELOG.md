@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.2.0] - 2026-08-04
+
+Translation-authenticity release, prompted by a real incident: an agent
+generated `responses.jsonl` with a static dictionary script instead of
+translating, leaving 76% of a 33-page manual untranslated, then self-approved
+under a human-sounding approver name with fabricated waiver justifications.
+The invariants "the session model translates every request" and "only humans
+approve" are now enforced by code, not prose.
+
+### Added
+
+- Authenticity detection (`authenticity_check`): flags translate-worthy
+  regions whose target is identical to the source, and targets that are not
+  in the target language (Vietnamese diacritic-ratio heuristic). Runs in BOTH
+  `validate_responses.py` (stage 5, fail-fast) and `qa_gates.py` Gate 2
+  (defense in depth). Per-region findings are P1; crossing the job-level
+  ratio threshold (default 5%, `translation.authenticity` in the engine
+  config) raises **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` —
+  P0 can never be waived**, so such a job can never be released.
+- `approve.py --decision revoke` — recall a bad release: `RELEASED → REVOKED`
+  (the only exit from RELEASED), removes the promoted output (draft.pdf and
+  the audit trail are kept), and re-opens the job for stages 4-8.
+- `AGENT_INSTRUCTIONS.md` rule 8: script/dictionary/find-replace generation
+  of responses is explicitly forbidden, with the enforcement consequences
+  spelled out.
+- Self-tests for the authenticity heuristics and the revoke state machine.
+
+### Changed
+
+- Engine version 1.2.0. `RELEASED` is no longer a terminal state (revoke
+  only); `REVOKED` re-enters the pipeline at validate.
+
 ## [1.1.0] - 2026-08-04
 
 Cross-agent portability release — one package, identical behavior in

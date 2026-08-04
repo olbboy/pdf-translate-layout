@@ -58,11 +58,43 @@ check("wrap single fits", wrap_lines([24], 2, 25) == [[0]])
 check("wrap too-wide token", wrap_lines([10, 30], 2, 25) is None)
 check("wrap exact width", wrap_lines([25], 2, 25) == [[0]])
 
-# state machine terminals
-for terminal in ("RELEASED", "MANUAL_DTP", "REJECTED", "CANCELLED"):
+# state machine terminals — RELEASED không còn terminal: chỉ được phép thu hồi (REVOKED)
+for terminal in ("MANUAL_DTP", "REJECTED", "CANCELLED"):
     check(f"terminal {terminal}", STATUS_TRANSITIONS[terminal] == set())
+check("RELEASED chỉ thoát qua REVOKED", STATUS_TRANSITIONS["RELEASED"] == {"REVOKED"})
 check("no direct RENDERED→RELEASED", "RELEASED" not in STATUS_TRANSITIONS["RENDERED"])
 check("no direct AUTO_QA→RELEASED", "RELEASED" not in STATUS_TRANSITIONS["AUTO_QA_PASS"])
+
+# ── authenticity (chống pseudo-translation — sự cố 2026-08-04) ──
+from _common import STATUS_TRANSITIONS as _ST, authenticity_check, authenticity_cfg
+
+check("auth identical EN paragraph",
+      authenticity_check("We strongly recommend that you read this manual before installing.",
+                         "We strongly recommend that you read this manual before installing.") == "identical")
+check("auth real VI translation OK",
+      authenticity_check("We strongly recommend that you read this manual.",
+                         "Chúng tôi đặc biệt khuyến nghị bạn đọc kỹ tài liệu này.") is None)
+check("auth mixed EN+VI flagged",
+      authenticity_check("Caution, a battery can present a risk of electric shock and burns.",
+                         "Chú Ý, a battery can present a risk of electric shock and burns.") == "lang_suspect")
+check("auth short label identical OK",
+      authenticity_check("No.", "No.") is None)
+check("auth address identical OK (under min_words)",
+      authenticity_check("Best regards,", "Best regards,") is None)
+check("auth placeholder-heavy skipped",
+      authenticity_check("⟦MODEL_1⟧ ⟦MEAS_1⟧ ⟦MEAS_2⟧", "⟦MODEL_1⟧ ⟦MEAS_1⟧ ⟦MEAS_2⟧") is None)
+check("auth non-vi target lang skipped",
+      authenticity_check("Read the manual carefully before use today.",
+                         "Lesen Sie das Handbuch sorgfaltig vor der Nutzung.",
+                         target_lang="de") is None)
+check("auth cfg defaults", authenticity_cfg({})["identical_ratio_max"] == 0.05)
+
+# ── revoke path trong state machine ──
+check("RELEASED -> REVOKED allowed", "REVOKED" in _ST["RELEASED"])
+check("REVOKED -> TRANSLATED allowed (re-run)", "TRANSLATED" in _ST["REVOKED"])
+check("RELEASED -> REJECTED still illegal", "REJECTED" not in _ST["RELEASED"])
+check("REVOKED not directly releasable",
+      "RELEASED" not in _ST["REVOKED"] and "HUMAN_APPROVED" not in _ST["REVOKED"])
 
 print()
 if FAILURES:

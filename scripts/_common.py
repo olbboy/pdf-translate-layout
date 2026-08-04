@@ -16,7 +16,7 @@ import unicodedata
 
 import yaml
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"
 LAYOUT_MODEL_VERSION = "lg-basic-2"
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,7 +32,8 @@ STATUS_TRANSITIONS = {
     "NEEDS_REVIEW": {"TRANSLATED", "HUMAN_APPROVED", "MANUAL_DTP", "REJECTED", "CANCELLED"},
     "AUTO_QA_PASS": {"HUMAN_APPROVED", "CANCELLED"},
     "HUMAN_APPROVED": {"RELEASED", "CANCELLED"},
-    "RELEASED": set(),
+    "RELEASED": {"REVOKED"},           # thu hồi release (approve.py --decision revoke)
+    "REVOKED": {"TRANSLATED", "CANCELLED"},  # re-run stage 4-8 sau khi thu hồi
     "MANUAL_DTP": set(),
     "REJECTED": set(),
     "CANCELLED": set(),
@@ -114,6 +115,48 @@ def read_jsonl(path: str) -> list:
 def load_default_config() -> dict:
     with open(os.path.join(ASSETS_DIR, "engine_config_default.yaml"), encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+# ── Translation authenticity (chống pseudo-translation / copy-through) ──
+# Sự cố 2026-08-04: agent thay stage 4 bằng script dictionary → 76% target trùng
+# source. Các heuristic dưới đây là input cho P0 gate không waive được.
+_AUTH_PH_RE = re.compile(r"⟦[A-Z]+_\d+⟧")
+_AUTH_WORD_RE = re.compile(r"[A-Za-zÀ-ỹ]{3,}")
+_AUTH_VI_RE = re.compile(r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọ"
+                         r"ốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]", re.IGNORECASE)
+
+
+def authenticity_check(source: str, target: str, target_lang: str = "vi",
+                       min_words: int = 4) -> str | None:
+    """Phân loại một cặp source/target của translate-region.
+
+    Trả về:
+      None           — không có dấu hiệu bất thường (hoặc region quá ngắn để xét)
+      "identical"    — region đáng dịch nhưng target trùng source (chưa dịch)
+      "lang_suspect" — target dài nhưng gần như không có chữ tiếng Việt
+                       (chỉ xét khi target_lang == "vi")
+    """
+    src = _AUTH_PH_RE.sub(" ", source)
+    tgt = _AUTH_PH_RE.sub(" ", target)
+    if len(_AUTH_WORD_RE.findall(src)) < min_words:
+        return None  # label/số/địa chỉ ngắn — identical hợp lệ
+    src_c = re.sub(r"\s+", " ", src).strip().lower()
+    tgt_c = re.sub(r"\s+", " ", tgt).strip().lower()
+    if src_c == tgt_c:
+        return "identical"
+    if target_lang == "vi":
+        alpha = re.findall(r"[A-Za-zÀ-ỹ]", tgt)
+        if len(alpha) >= 20 and len(_AUTH_VI_RE.findall(tgt)) / len(alpha) < 0.05:
+            return "lang_suspect"
+    return None
+
+
+def authenticity_cfg(cfg: dict) -> dict:
+    """Ngưỡng authenticity từ engine config, default an toàn cho job cũ."""
+    a = cfg.get("translation", {}).get("authenticity", {})
+    return {"identical_ratio_max": a.get("identical_ratio_max", 0.05),
+            "lang_suspect_ratio_max": a.get("lang_suspect_ratio_max", 0.05),
+            "min_words": a.get("min_words", 4)}
 
 
 def make_issue(code: str, severity: str, stage: str, detail: str,

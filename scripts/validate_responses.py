@@ -9,8 +9,9 @@ from __future__ import annotations
 import argparse
 import re
 
-from _common import (BlockingError, Job, exit_blocking, load_glossary, load_json,
-                     make_issue, nfc, read_jsonl, save_json)
+from _common import (BlockingError, Job, authenticity_cfg, authenticity_check,
+                     exit_blocking, load_glossary, load_json, make_issue, nfc,
+                     read_jsonl, save_json)
 
 STAGE = "validate"
 PH_RE = re.compile(r"⟦([A-Z]+_\d+)⟧")
@@ -38,8 +39,10 @@ def validate(job: Job) -> None:
     cfg = job.config
     pmap = cfg["unicode"]["punctuation_map"]
     locked = [g for g in load_glossary(job) if g["type"] == "locked"]
+    auth = authenticity_cfg(cfg)
+    target_lang = cfg["languages"]["target"]
     issues: list[dict] = []
-    n_ok = n_fail = 0
+    n_ok = n_fail = n_ident = n_lang = 0
     seen: set[str] = set()
 
     for resp in responses:
@@ -112,6 +115,18 @@ def validate(job: Job) -> None:
                 n_fail += 1
                 break
         else:
+            # Authenticity (chống copy-through — spec sự cố 2026-08-04): flag P1
+            # per-region, tổng hợp thành P0 blocking sau vòng lặp khi vượt ngưỡng.
+            auth_flag = authenticity_check(req["source_text"], target_pl,
+                                           target_lang, auth["min_words"])
+            if auth_flag == "identical":
+                n_ident += 1
+                fail("TRANSLATION_IDENTICAL",
+                     "region đáng dịch nhưng target trùng source (chưa dịch)")
+            elif auth_flag == "lang_suspect":
+                n_lang += 1
+                fail("TARGET_LANG_SUSPECT",
+                     f"target gần như không có chữ tiếng {target_lang} — nghi chưa dịch/dịch máy lỗi")
             mapping = reg.get("placeholders", {})
             reg["target_runs"] = norm_runs
             reg["target_text"] = nfc(PH_RE.sub(
@@ -124,13 +139,33 @@ def validate(job: Job) -> None:
             }
             n_ok += 1
 
+    # Job-level authenticity gate — P0, KHÔNG waive được (approve.py chặn mọi P0).
+    n_resp = max(1, len(seen))
+    ident_ratio, lang_ratio = n_ident / n_resp, n_lang / n_resp
+    auth_block = None
+    if ident_ratio > auth["identical_ratio_max"]:
+        auth_block = (f"TRANSLATION_COVERAGE_FAIL: {n_ident}/{n_resp} regions "
+                      f"({ident_ratio:.0%}) target trùng source — vượt ngưỡng "
+                      f"{auth['identical_ratio_max']:.0%}. Bản dịch phải do model của session "
+                      "sinh ra cho TỪNG region; cấm script/dictionary/find-replace.")
+        issues.append(make_issue("TRANSLATION_COVERAGE_FAIL", "P0", STAGE, auth_block))
+    if lang_ratio > auth["lang_suspect_ratio_max"]:
+        detail = (f"TARGET_LANG_FAIL: {n_lang}/{n_resp} regions ({lang_ratio:.0%}) "
+                  f"không phải tiếng {target_lang} — vượt ngưỡng "
+                  f"{auth['lang_suspect_ratio_max']:.0%}.")
+        issues.append(make_issue("TARGET_LANG_FAIL", "P0", STAGE, detail))
+        auth_block = auth_block or detail
+
     pending = [rid for rid, r in regions.items()
                if r["translation_action"] == "translate" and "target_text" not in r]
     save_json(job.p("model", "regions.json"), model)
     save_json(job.p("model", "validate_issues.json"), issues)
     job.mark_stage("translate", "done" if not pending else f"partial:{len(pending)}")
+    if auth_block:
+        job.mark_stage(STAGE, f"failed:authenticity ident={n_ident} lang={n_lang}")
+        raise BlockingError(auth_block)
     job.mark_stage(STAGE, "done" if n_fail == 0 else f"failed:{n_fail}")
-    if not pending and n_fail == 0 and job.status() in ("PREFLIGHTED", "NEEDS_REVIEW"):
+    if not pending and n_fail == 0 and job.status() in ("PREFLIGHTED", "NEEDS_REVIEW", "REVOKED"):
         job.set_status("TRANSLATED", "100% translate-regions có target hợp lệ")
         job.write_summary("Chạy `fit_paint.py --job <job>` để render draft.")
     else:

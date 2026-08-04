@@ -228,6 +228,12 @@ Quy tắc bắt buộc (validator sẽ reject nếu vi phạm):
 6. Số và đơn vị giữ định dạng nguồn (đã nằm trong placeholder MEAS/MODEL).
 7. `\n` trong text của target run = explicit line break (xuống dòng cứng); dùng khi
    cần giữ cấu trúc dòng như label/value hoặc danh sách trong một cell.
+8. **BẢN DỊCH PHẢI DO MODEL CỦA SESSION DỊCH TRỰC TIẾP, TỪNG REQUEST.** CẤM sinh
+   `responses.jsonl` bằng script, dictionary tra cứu, hay find-replace — kể cả
+   "để cho nhanh". Engine đo tỷ lệ region chưa dịch (target trùng source) và
+   region sai ngôn ngữ đích: vượt 5% (config `translation.authenticity`) → P0 `TRANSLATION_COVERAGE_FAIL`,
+   KHÔNG waive được, job không bao giờ release. Khối lượng lớn → dịch theo batch
+   trong `batches.json`, nhiều turn; không được đi tắt.
 
 ## Domain context
 

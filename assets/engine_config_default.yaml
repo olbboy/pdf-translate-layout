@@ -48,3 +48,9 @@ translation:
   # Agent-neutral placeholder; agent truyền model id thật qua `preflight.py --provider-model`.
   provider_model_version: in-session
   prompt_version: req-v1
+  # Chống pseudo-translation (sự cố 2026-08-04: agent sinh responses bằng script
+  # dictionary → 76% chưa dịch). Vượt ngưỡng → P0, không waive được.
+  authenticity:
+    identical_ratio_max: 0.05     # tỷ lệ region đáng dịch có target trùng source
+    lang_suspect_ratio_max: 0.05  # tỷ lệ region target không phải ngôn ngữ đích
+    min_words: 4                  # region dưới ngưỡng từ này không xét (label/số)

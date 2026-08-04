@@ -7,9 +7,11 @@ Chạy: python3 approve.py --job <job_dir> --approver <tên> --decision approve|
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 
-from _common import BlockingError, Job, append_jsonl, exit_blocking, load_json, utc_now
+from _common import (BlockingError, Job, append_jsonl, exit_blocking, load_json,
+                     sha256_file, utc_now)
 
 STAGE = "approve"
 
@@ -18,7 +20,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--job", required=True)
     ap.add_argument("--approver", required=True)
-    ap.add_argument("--decision", choices=("approve", "reject"), required=True)
+    ap.add_argument("--decision", choices=("approve", "reject", "revoke"), required=True)
     ap.add_argument("--note", default="")
     ap.add_argument("--waive", action="append", default=[], metavar="CODE=REASON",
                     help="reviewer chấp nhận toàn bộ P1 của một issue code kèm lý do "
@@ -47,6 +49,25 @@ def main() -> None:
                 job.set_status("REJECTED", f"reviewer {args.approver} reject")
                 job.write_summary(f"Bị reject bởi {args.approver}: {args.note or '(no note)'}")
                 print("rejected — đã ghi decisions.jsonl")
+                return
+
+            if args.decision == "revoke":
+                # Thu hồi release đã phát hành (vd: approval giả mạo, lỗi phát hiện muộn).
+                if job.status() != "RELEASED":
+                    raise BlockingError(f"revoke chỉ áp dụng cho job RELEASED (hiện: {job.status()})")
+                job.set_status("REVOKED", f"reviewer {args.approver} revoke: {args.note or '(no note)'}")
+                out = job.p("output", "translated-approved.pdf")
+                if os.path.exists(out):
+                    draft = job.p("render", "draft.pdf")
+                    if os.path.exists(draft) and sha256_file(out) == sha256_file(draft):
+                        os.remove(out)  # bản copy y hệt draft — xoá an toàn, draft giữ nguyên
+                    else:
+                        os.replace(out, job.p("output",
+                                              f"REVOKED-{utc_now().replace(':', '')}.pdf"))
+                job.write_summary(
+                    f"REVOKED bởi {args.approver}: {args.note or '(no note)'} — output đã thu hồi. "
+                    "Re-run: sửa translation/responses.jsonl → validate → fit_paint → qa → approve.")
+                print("revoked — output đã thu hồi, đã ghi decisions.jsonl")
                 return
 
             if qa.get("partial"):

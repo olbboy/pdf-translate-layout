@@ -4,24 +4,26 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills — chạy trên Claude Code, OpenAI Codex, Google Antigravity (và agent tương thích SKILL.md khác). Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.1.0 — scripts Milestone 1-4 core hoạt động, đã E2E-test
+> **Trạng thái:** RELEASED v1.2.0 — scripts Milestone 1-4 core hoạt động, đã E2E-test
 > full trên tài liệu thật 15 trang (263 regions, 7/7 gates PASS). Portable đa agent
-> (Claude Code / Codex / Antigravity — §9). Giới hạn v1 ở §11.
+> (Claude Code / Codex / Antigravity — §9), có authenticity gates chống
+> pseudo-translation (§1.6, §7). Giới hạn v1 ở §11.
 > **Spec nguồn:** PDF Translation Engine v1 (rev 1.4) — tài liệu thiết kế nội bộ; kiến trúc tóm tắt trong [README](README.md)
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
 
 ## 1. Nguyên Tắc Bắt Buộc
 
 1. **Fail-closed:** input ngoài supported envelope tạo issue có mã; không silent fallback, không rasterize ngầm.
-2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve; auto-QA pass chỉ tạo `render/draft.pdf`.
+2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve; auto-QA pass chỉ tạo `render/draft.pdf`. Release sai có thể thu hồi: `approve.py --decision revoke` → status `REVOKED`, xoá output, cho phép re-run stage 4-8.
 3. **Artifact là source of truth:** mọi run kết thúc bằng job folder trên disk, không chỉ chat text.
 4. **Source immutable:** không bao giờ sửa PDF gốc; mỗi render ghi file mới.
 5. Scripts đảm nhiệm phần deterministic (extract, fit, paint, QA); agent đảm nhiệm dịch và điều phối. Agent không tự đặt tọa độ text.
+6. **Authenticity (enforce bằng code, không chỉ văn bản):** bản dịch stage 4 PHẢI do model của session sinh cho từng request — CẤM sinh `responses.jsonl` bằng script/dictionary/find-replace. Validator + Gate 2 đo tỷ lệ region đáng dịch có target trùng source hoặc sai ngôn ngữ đích; vượt ngưỡng (`translation.authenticity`, default 5%) → **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` — không waive được, không thể release** (sự cố Antigravity 2026-08-04).
 
 ## 2. I/O Contract
 
@@ -101,7 +103,7 @@ job_id = <slug(pdf_stem)>__<source_sha8>__<UTC yyyymmddThhmmss>
 | 8 | approve | `scripts/approve.py --approver <name>` | `decisions.jsonl`, promote `output/` |
 
 - Mỗi stage idempotent; resume = chạy stage kế tiếp còn thiếu; mọi stage mở đầu bằng verify fingerprint.
-- **Stage 4 chạy bởi chính agent của session** (Claude Code / Codex / Antigravity) bằng model của session — không gọi API ngoài, không cần API key riêng. Agent truyền model id thật qua `--provider-model` khi tạo job (mục 2).
+- **Stage 4 chạy bởi chính agent của session** (Claude Code / Codex / Antigravity) bằng model của session — không gọi API ngoài, không cần API key riêng. Agent truyền model id thật qua `--provider-model` khi tạo job (mục 2). Dịch thật từng request theo batch — mọi lối tắt script/dictionary bị chặn P0 (mục 1.6).
 - **Batching stage 4:** mỗi batch chứa region theo reading order kèm type/neighbors/container hint; **không cắt batch giữa cross-page continuation group**; không nhét cả PDF vào một turn.
 - **Explicit line break:** `\n` trong text của target run = hard break (giữ cấu trúc label/value); fitter tôn trọng, validator/QA so sánh sau khi collapse whitespace.
 - Translation memory: chỉ seed TM từ jobs đã **approved**.
@@ -123,7 +125,7 @@ job_id = <slug(pdf_stem)>__<source_sha8>__<UTC yyyymmddThhmmss>
 
 ## 7. Quality Gates (tóm tắt — chi tiết ở spec §10)
 
-Gate 1 decision coverage → Gate 2 translation integrity (placeholder round-trip, glossary) → Gate 3 rendered-text coverage (translated + `keep` regions nguyên vẹn, NFC, tofu, color tolerance, htmlbox scale trong policy) → Gate 4 geometry/collision → Gate 5 image/vector preservation (so với `resource_manifest.json`) → Gate 6 visual diff 300/600 DPI → Gate 7 structural validation. Release cần: không còn P0/P1 unresolved **và** human approval.
+Gate 1 decision coverage → Gate 2 translation integrity (placeholder round-trip, glossary, **authenticity: identical-target + target-language ratio, P0 khi vượt ngưỡng — mục 1.6**) → Gate 3 rendered-text coverage (translated + `keep` regions nguyên vẹn, NFC, tofu, color tolerance, htmlbox scale trong policy) → Gate 4 geometry/collision → Gate 5 image/vector preservation (so với `resource_manifest.json`) → Gate 6 visual diff 300/600 DPI → Gate 7 structural validation. Release cần: không còn P0/P1 unresolved **và** human approval.
 
 So sánh resource/visual dùng **content digest + geometric tolerance (~1pt)** và **meaningful-diff threshold** — không dùng bit-exact/md5 equality: tọa độ round-int flaky tại biên `.5`, renderer lệch ±1/255 theo cache state (spec §9.5, §20.1).
 
@@ -162,7 +164,8 @@ Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một f
   `.agents/` ở git root — dùng bản global.
 - **Quy tắc parity:** agent nào cũng chạy đúng các stage script §4 qua shell với `$PYTHON`
   từ `setup.sh`; stage 4 agent tự dịch in-session và ghi model id qua `--provider-model`;
-  không agent nào được tự approve (mục 1.2) hay tự đặt tọa độ text (mục 1.5).
+  không agent nào được tự approve (mục 1.2), tự đặt tọa độ text (mục 1.5), hay sinh
+  bản dịch bằng script/dictionary (mục 1.6 — P0 không waive được).
 - Codex sandbox: scripts chỉ đọc/ghi trong workspace và job folder — không cần escalation;
   chỉ `setup.sh` lần đầu cần network approval.
 

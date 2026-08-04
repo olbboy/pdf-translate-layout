@@ -16,8 +16,8 @@ import numpy as np
 import pymupdf
 from PIL import Image, ImageDraw
 
-from _common import (BlockingError, Job, exit_blocking, load_json, make_issue,
-                     save_json, utc_now)
+from _common import (BlockingError, Job, authenticity_cfg, authenticity_check,
+                     exit_blocking, load_json, make_issue, save_json, utc_now)
 from preflight import merge_rects
 
 STAGE = "qa"
@@ -69,16 +69,41 @@ def run_gates(job: Job) -> None:
                             "pending": n_pending, "untranslated": n_untranslated,
                             "manual": n_manual}
 
-    # ── Gate 2: translation integrity (spec §10.2) ──
+    # ── Gate 2: translation integrity (spec §10.2) + authenticity ──
     v_issues = load_json(job.p("model", "validate_issues.json"), [])
     v_p1 = [i for i in v_issues if i["severity"] in ("P0", "P1")]
-    same = [r for r in regions.values() if r.get("target_text")
-            and norm(r["target_text"]) == norm(r["source_text"]) and len(r["source_text"]) > 12]
-    for r in same[:10]:
-        gi("TRANSLATION_IDENTICAL", "P2", "target trùng source — kiểm tra có phải cố ý",
+    # Defense-in-depth với validator: đo lại trực tiếp trên regions.json —
+    # region đáng dịch mà target trùng source / không phải target-lang.
+    auth = authenticity_cfg(cfg)
+    target_lang = cfg["languages"]["target"]
+    translated = [r for r in regions.values()
+                  if r["translation_action"] == "translate" and r.get("target_text")]
+    same, lang_bad = [], []
+    for r in translated:
+        flag = authenticity_check(r["source_text"], r["target_text"],
+                                  target_lang, auth["min_words"])
+        if flag == "identical":
+            same.append(r)
+        elif flag == "lang_suspect":
+            lang_bad.append(r)
+    for r in same[:20]:
+        gi("TRANSLATION_IDENTICAL", "P1", "region đáng dịch nhưng target trùng source",
            page=r["page"], region_id=r["region_id"])
-    gates["g2_translation"] = {"pass": not v_p1, "validate_p1": len(v_p1),
-                               "identical": len(same)}
+    for r in lang_bad[:20]:
+        gi("TARGET_LANG_SUSPECT", "P1", f"target không phải tiếng {target_lang}",
+           page=r["page"], region_id=r["region_id"])
+    n_tr = max(1, len(translated))
+    cover_fail = len(same) / n_tr > auth["identical_ratio_max"] \
+        or len(lang_bad) / n_tr > auth["lang_suspect_ratio_max"]
+    if cover_fail:
+        gi("TRANSLATION_COVERAGE_FAIL", "P0",
+           f"pseudo-translation: identical={len(same)}/{n_tr} "
+           f"lang_suspect={len(lang_bad)}/{n_tr} vượt ngưỡng "
+           f"{auth['identical_ratio_max']:.0%} — stage 4 phải do model dịch thật, "
+           "P0 không waive được")
+    gates["g2_translation"] = {"pass": not v_p1 and not cover_fail,
+                               "validate_p1": len(v_p1), "identical": len(same),
+                               "lang_suspect": len(lang_bad)}
 
     # ── Gate 3: rendered-text coverage (spec §10.3) ──
     g3_fail = 0
