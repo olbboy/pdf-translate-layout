@@ -108,6 +108,15 @@ check("auth email label OK",
       authenticity_check("Email: contact_support@example-corp.com please write",
                          "Email: contact_support@example-corp.com") is None)
 
+check("auth truncated flagged",
+      authenticity_check("One two three four five six seven eight nine ten eleven twelve thirteen fourteen.",
+                         "Một hai ba.") == "truncated")
+check("auth full translation not truncated",
+      authenticity_check("Keep the battery away from water, dust and contamination at all times please.",
+                         "Luôn giữ pin tránh xa nước, bụi bẩn và các chất gây ô nhiễm mọi lúc.") is None)
+check("auth short source no truncation check",
+      authenticity_check("Contact PYTES for support.", "Liên hệ PYTES.") is None)
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}):")

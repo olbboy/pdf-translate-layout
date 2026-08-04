@@ -36,6 +36,17 @@ def validate(job: Job) -> None:
     if not responses:
         raise BlockingError("translation/responses.jsonl trống — agent chưa dịch")
 
+    # Append-workflow: chỉ validate DÒNG CUỐI của mỗi region — dòng cũ bị ghi đè
+    # là lịch sử, không phát issue/fail cho chúng (ghi nhận P2 DUPLICATE_RESPONSE).
+    latest: dict[str, dict] = {}
+    n_dup = 0
+    for resp in responses:
+        rid = resp.get("region_id", "")
+        if rid in latest:
+            n_dup += 1
+        latest[rid] = resp
+    responses = list(latest.values())
+
     cfg = job.config
     pmap = cfg["unicode"]["punctuation_map"]
     locked = [g for g in load_glossary(job) if g["type"] == "locked"]
@@ -65,9 +76,6 @@ def validate(job: Job) -> None:
                                      "response cho region không còn tồn tại (layout cũ)",
                                      region_id=rid))
             continue
-        if rid in seen:  # bản sau ghi đè bản trước (agent sửa) — chỉ ghi nhận
-            issues.append(make_issue("DUPLICATE_RESPONSE", "P2", STAGE,
-                                     "response bị ghi đè bởi bản mới hơn", region_id=rid))
         seen.add(rid)
 
         runs = resp.get("target_runs")
@@ -149,6 +157,11 @@ def validate(job: Job) -> None:
             issues.append(make_issue("TARGET_LANG_SUSPECT", "P1", STAGE,
                                      f"target gần như không có chữ tiếng {target_lang} — "
                                      "nghi chưa dịch/dịch máy lỗi", page=page, region_id=rid))
+        elif flag == "truncated":
+            issues.append(make_issue("TRANSLATION_TRUNCATED", "P1", STAGE,
+                                     "target mất khối lượng nội dung so với source (<45% số từ) "
+                                     "— nghi dịch nuốt ý; dịch lại ĐẦY ĐỦ region này",
+                                     page=page, region_id=rid))
 
     # Job-level authenticity gate — P0, KHÔNG waive được (approve.py chặn mọi P0).
     n_resp = max(1, len(seen))
@@ -167,6 +180,9 @@ def validate(job: Job) -> None:
         issues.append(make_issue("TARGET_LANG_FAIL", "P0", STAGE, detail))
         auth_block = auth_block or detail
 
+    if n_dup:
+        issues.append(make_issue("DUPLICATE_RESPONSE", "P2", STAGE,
+                                 f"{n_dup} dòng cũ bị ghi đè bởi bản mới hơn (append-workflow)"))
     pending = [rid for rid, r in regions.items()
                if r["translation_action"] == "translate" and "target_text" not in r]
     save_json(job.p("model", "regions.json"), model)

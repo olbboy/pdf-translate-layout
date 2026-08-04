@@ -16,7 +16,7 @@ import unicodedata
 
 import yaml
 
-ENGINE_VERSION = "1.2.2"
+ENGINE_VERSION = "1.3.0"
 LAYOUT_MODEL_VERSION = "lg-basic-2"
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -137,6 +137,9 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
       "identical"    — region đáng dịch nhưng target trùng source (chưa dịch)
       "lang_suspect" — target dài nhưng gần như không có chữ tiếng Việt
                        (chỉ xét khi target_lang == "vi")
+      "truncated"    — target mất khối lượng nội dung so với source (sự cố
+                       2026-08-04 #3: mục an toàn 147→29 từ; VI chuẩn giữ
+                       >=70% số từ EN, dưới 45% = nghi nuốt nội dung)
     """
     src = _AUTH_PH_RE.sub(" ", source)
     tgt = _AUTH_PH_RE.sub(" ", target)
@@ -152,6 +155,9 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
     tgt_c = re.sub(r"\s+", " ", tgt).strip().lower()
     if src_c == tgt_c:
         return "identical"
+    src_w = len(_AUTH_WORD_RE.findall(src))
+    if src_w >= 12 and len(_AUTH_WORD_RE.findall(tgt)) < 0.45 * src_w:
+        return "truncated"
     if target_lang == "vi":
         alpha = _AUTH_LETTER_RE.findall(tgt)
         if len(alpha) >= 20 and len(_AUTH_VI_RE.findall(tgt)) / len(alpha) < 0.05:

@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.3.0] - 2026-08-04
+
+Post-release review of a real 33-page job surfaced two defect classes that
+were invisible to every gate: dictionary-era responses that silently dropped
+content inside otherwise-valid translations (a safety section shrank from
+147 to 29 words), and a long tail of short untranslated regions sitting
+below the authenticity word threshold ("Problem", "Solution", section
+headings, warranty-card labels).
+
+### Added
+
+- `TRANSLATION_TRUNCATED` (P1): a translate-region whose source has ≥12
+  words and whose target keeps fewer than 45% of them is flagged in both
+  the validator and Gate 2 — Vietnamese normally retains ≥70% of the
+  English word count, so a big drop means dropped content, not concision.
+- `IDENTICAL_SHORT` (P2): every short region left identical to its source
+  is now listed in the QA report and JOB_SUMMARY so the reviewer can scan
+  the full tail instead of trusting silence; legitimate keeps (signal
+  names, part numbers) stay un-blocking.
+
+### Changed
+
+- Validator now validates only the LAST response line per region: the
+  append-style fix workflow is first-class, so superseded lines no longer
+  re-emit issues or failure counts on every pass (they are summarized as
+  one P2 `DUPLICATE_RESPONSE` note). Engine version 1.3.0.
+
 ## [1.2.2] - 2026-08-04
 
 Authenticity-detector hardening from a full 33-page production run — three

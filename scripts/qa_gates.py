@@ -78,7 +78,7 @@ def run_gates(job: Job) -> None:
     target_lang = cfg["languages"]["target"]
     translated = [r for r in regions.values()
                   if r["translation_action"] == "translate" and r.get("target_text")]
-    same, lang_bad = [], []
+    same, lang_bad, truncated, same_short = [], [], [], []
     for r in translated:
         flag = authenticity_check(r["source_text"], r["target_text"],
                                   target_lang, auth["min_words"])
@@ -86,11 +86,26 @@ def run_gates(job: Job) -> None:
             same.append(r)
         elif flag == "lang_suspect":
             lang_bad.append(r)
+        elif flag == "truncated":
+            truncated.append(r)
+        elif norm(r["target_text"]) == norm(r["source_text"]) \
+                and re.search(r"[^\W\d_]{3,}", r["source_text"]):
+            # Region ngắn (dưới min_words) giữ nguyên source — không đủ cơ sở block
+            # nhưng reviewer PHẢI quét được danh sách (sự cố 2026-08-04 #3: 73 region
+            # ngắn tiếng Anh sót lại vô hình với mọi gate).
+            same_short.append(r)
     for r in same[:20]:
         gi("TRANSLATION_IDENTICAL", "P1", "region đáng dịch nhưng target trùng source",
            page=r["page"], region_id=r["region_id"])
     for r in lang_bad[:20]:
         gi("TARGET_LANG_SUSPECT", "P1", f"target không phải tiếng {target_lang}",
+           page=r["page"], region_id=r["region_id"])
+    for r in truncated[:20]:
+        gi("TRANSLATION_TRUNCATED", "P1", "target mất khối lượng nội dung (<45% số từ nguồn)",
+           page=r["page"], region_id=r["region_id"])
+    for r in same_short[:80]:
+        gi("IDENTICAL_SHORT", "P2",
+           f"region ngắn giữ nguyên source: {r['source_text'][:40]!r} — xác nhận cố ý hay sót",
            page=r["page"], region_id=r["region_id"])
     n_tr = max(1, len(translated))
     cover_fail = len(same) / n_tr > auth["identical_ratio_max"] \
@@ -103,7 +118,8 @@ def run_gates(job: Job) -> None:
            "P0 không waive được")
     gates["g2_translation"] = {"pass": not v_p1 and not cover_fail,
                                "validate_p1": len(v_p1), "identical": len(same),
-                               "lang_suspect": len(lang_bad)}
+                               "lang_suspect": len(lang_bad), "truncated": len(truncated),
+                               "identical_short": len(same_short)}
 
     # ── Gate 3: rendered-text coverage (spec §10.3) ──
     g3_fail = 0
