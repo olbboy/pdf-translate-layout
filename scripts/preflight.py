@@ -3,6 +3,7 @@
 Spec §6.2, §3.2. Output: model/preflight.json, model/resource_manifest.json.
 Chạy: python3 preflight.py --pdf <path> [--out jobs] [--domain-context <text|path>]
        [--glossary <csv>] [--customer-facing] [--job <job_dir>]
+       [--source-lang en] [--target-lang vi] [--provider-model <model_id>]
 """
 
 from __future__ import annotations
@@ -83,6 +84,13 @@ def create_or_open_job(args) -> Job:
     cfg = load_default_config()
     if args.customer_facing:
         cfg["policy"]["require_domain_context"] = True
+    # Override snapshot theo CLI (SKILL.md §2) — chỉ lúc tạo job; resume dùng config đã freeze.
+    if args.source_lang:
+        cfg["languages"]["source"] = args.source_lang
+    if args.target_lang:
+        cfg["languages"]["target"] = args.target_lang
+    if args.provider_model:
+        cfg["translation"]["provider_model_version"] = args.provider_model
     fonts_manifest = os.path.join(ASSETS_DIR, "fonts", "fonts_manifest.json")
     import json as _json
     meta = {
@@ -250,6 +258,11 @@ def main() -> None:
     ap.add_argument("--glossary")
     ap.add_argument("--customer-facing", action="store_true")
     ap.add_argument("--job")
+    ap.add_argument("--source-lang", help="override languages.source lúc tạo job (default: en)")
+    ap.add_argument("--target-lang", help="override languages.target lúc tạo job (default: vi)")
+    ap.add_argument("--provider-model",
+                    help="model id thật của agent dịch stage 4, ghi vào determinism tuple "
+                         "(vd claude-fable-5, gpt-5.2-codex, gemini-3-pro)")
     args = ap.parse_args()
 
     job = None

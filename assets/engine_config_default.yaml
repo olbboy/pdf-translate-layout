@@ -45,5 +45,6 @@ policy:
 
 translation:
   batch_max_regions: 20
-  provider_model_version: claude-in-session
+  # Agent-neutral placeholder; agent truyền model id thật qua `preflight.py --provider-model`.
+  provider_model_version: in-session
   prompt_version: req-v1

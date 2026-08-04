@@ -16,7 +16,7 @@ import unicodedata
 
 import yaml
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 LAYOUT_MODEL_VERSION = "lg-basic-2"
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

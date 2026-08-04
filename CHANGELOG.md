@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.1.0] - 2026-08-04
+
+Cross-agent portability release — one package, identical behavior in
+Claude Code, OpenAI Codex, and Google Antigravity (Agent Skills standard).
+
+### Added
+
+- `scripts/setup.sh` — unified interpreter contract for every agent: resolves
+  `$PDFTL_PYTHON` → local `.venv` → any system Python satisfying the pins,
+  bootstraps a venv when needed, and always prints `PYTHON=<path>`
+  (fail-closed validation of the PyMuPDF pin).
+- `scripts/install.sh` — discovery registration: repo-level
+  (`.agents/skills/` + `.claude/skills/`, relative symlinks safe to commit)
+  and global (`~/.agents/skills`, `~/.claude/skills`,
+  `~/.gemini/config/skills`); `--copy` fallback, `status` inspection.
+- `preflight.py --source-lang / --target-lang` — language pair overrides
+  recorded into the frozen job config (previously documented in SKILL.md §2
+  but not implemented).
+- `preflight.py --provider-model` — records the actual translating model id
+  in the determinism tuple (e.g. `claude-fable-5`, `gpt-5.2-codex`,
+  `gemini-3-pro`).
+- SKILL.md frontmatter `license`, `compatibility`, `metadata.version` per the
+  Agent Skills specification, plus a cross-agent operations section
+  (discovery paths, invocation, parity rules, sandbox notes).
+
+### Changed
+
+- Engine version 1.1.0. Default `provider_model_version` is now agent-neutral
+  `in-session` (was `claude-in-session`); the real model id comes from
+  `--provider-model`.
+- Environment docs no longer assume an agent-specific interpreter path;
+  every stage runs through the `setup.sh` contract.
+
 ## [1.0.0] - 2026-08-04
 
 First public release. Validated end-to-end on a real 15-page technical manual

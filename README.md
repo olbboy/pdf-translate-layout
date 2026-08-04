@@ -1,6 +1,7 @@
 # pdf-translate-layout
 
-**Layout-preserving PDF translation skill for Claude Code (English → Vietnamese).**
+**Layout-preserving PDF translation skill for AI coding agents (English → Vietnamese).**
+Runs identically in Claude Code, OpenAI Codex, and Google Antigravity.
 
 Translates technical PDFs — manuals, datasheets, quick guides — while keeping the
 original layout intact: images, vector graphics, tables, typography, colors, and
@@ -8,9 +9,10 @@ page geometry are preserved and *proven* preserved by automated quality gates.
 Releases are fail-closed: nothing ships without gates passing **and** explicit
 human approval.
 
-Built as a [Claude Code](https://claude.com/claude-code) skill: deterministic
+Built as an [Agent Skills](https://agentskills.io) package: deterministic
 Python scripts handle extraction, fitting, painting, and QA, while the agent in
-your session acts as the translation provider.
+your session acts as the translation provider — no external translation API or
+key required, whichever agent you use.
 
 > Validated end-to-end on a real 15-page battery installation manual:
 > 263 semantic regions, 173 translated, all 7 quality gates passing, output
@@ -57,7 +59,11 @@ Key properties:
 ## Requirements
 
 - Python ≥ 3.10
-- Dependencies: `pip install -r requirements.txt`
+- Dependencies: `bash scripts/setup.sh` — validates or bootstraps a pinned
+  environment (local `.venv`) and prints `PYTHON=<path>` to use for every
+  stage script. Resolution order: `$PDFTL_PYTHON` → `./.venv` → any system
+  Python satisfying the pins. Equivalent manual route:
+  `pip install -r requirements.txt`
   (PyMuPDF is pinned — redaction/subsetting behavior is version-tested)
 - Fonts: a Noto pack (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic) is
   bundled in `assets/fonts/` with pinned SHA-256 manifest and full Vietnamese
@@ -65,29 +71,42 @@ Key properties:
 
 ## Usage
 
-### As a Claude Code skill
+### As an agent skill (Claude Code / Codex / Antigravity)
 
-Copy this folder to `~/.claude/skills/pdf-translate-layout` (personal) or
-`.claude/skills/` inside a project, then ask Claude to translate a PDF
-preserving layout. The agent orchestrates the stages and performs the
-translation step itself, following `SKILL.md` and the generated
-`AGENT_INSTRUCTIONS.md`.
+Register the skill once:
+
+```bash
+bash scripts/install.sh global   # ~/.agents/skills (Codex), ~/.claude/skills
+                                 # (Claude Code), ~/.gemini/config/skills (Antigravity)
+```
+
+Inside a project, `bash scripts/install.sh repo` symlinks it into
+`<git root>/.agents/skills/` and `.claude/skills/` instead (relative links,
+safe to commit). Add `--copy` if your tool does not follow symlinks;
+`bash scripts/install.sh status` shows every location.
+
+Then ask your agent to translate a PDF preserving layout. The agent resolves
+the interpreter with `scripts/setup.sh`, orchestrates the stages, performs the
+translation step itself with the session's own model, and records that model id
+in the job's determinism tuple (`preflight.py --provider-model`), following
+`SKILL.md` and the generated `AGENT_INSTRUCTIONS.md`.
 
 ### Manually (agent-less)
 
 Every deterministic stage is a standalone CLI:
 
 ```bash
-python3 scripts/preflight.py --pdf manual.pdf --out jobs \
+PYTHON=$(bash scripts/setup.sh | sed -n 's/^PYTHON=//p')
+"$PYTHON" scripts/preflight.py --pdf manual.pdf --out jobs \
   --domain-context "LFP battery ESS installation; keep brands; imperative safety tone"
-python3 scripts/extract_group.py    --job jobs/<job_id>
-python3 scripts/translate_prep.py   --job jobs/<job_id>
+"$PYTHON" scripts/extract_group.py    --job jobs/<job_id>
+"$PYTHON" scripts/translate_prep.py   --job jobs/<job_id>
 # fill translation/responses.jsonl (by hand, or any MT system) per AGENT_INSTRUCTIONS.md
-python3 scripts/validate_responses.py --job jobs/<job_id>
-python3 scripts/fit_paint.py        --job jobs/<job_id>
-python3 scripts/qa_gates.py         --job jobs/<job_id>
+"$PYTHON" scripts/validate_responses.py --job jobs/<job_id>
+"$PYTHON" scripts/fit_paint.py        --job jobs/<job_id>
+"$PYTHON" scripts/qa_gates.py         --job jobs/<job_id>
 # review qa/page_png + qa/diffs + JOB_SUMMARY.md, then:
-python3 scripts/approve.py --job jobs/<job_id> --approver you --decision approve
+"$PYTHON" scripts/approve.py --job jobs/<job_id> --approver you --decision approve
 ```
 
 `selftest.py` runs the pure-function test suite.
@@ -109,7 +128,7 @@ jobs/<pdf-slug>__<sha8>__<timestamp>/
 
 ## Data & privacy
 
-**When used as a Claude Code skill, the text content of your PDF is sent to the
+**When used as an agent skill, the text content of your PDF is sent to the
 LLM provider of your session for translation.** You are responsible for your
 own data policy. For sensitive documents, run the manual flow with a private
 translation source instead.

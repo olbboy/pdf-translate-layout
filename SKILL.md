@@ -1,14 +1,19 @@
 ---
 name: pdf-translate-layout
 description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layout, ảnh, vector, bảng và typography theo PDF Translation Engine v1. Dùng khi user muốn dịch PDF giữ nguyên format ("translate PDF keep layout", dịch manual/datasheet/quick guide sang tiếng Việt), hoặc tiếp tục một translation job đã có. Fail-closed; output cuối chỉ phát hành khi quality gates pass và có human approval.
+license: AGPL-3.0
+compatibility: Agent-agnostic theo chuẩn Agent Skills — chạy trên Claude Code, OpenAI Codex, Google Antigravity (và agent tương thích SKILL.md khác). Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
+metadata:
+  version: "1.1.0"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.0.0 — scripts Milestone 1-4 core hoạt động, đã E2E-test
-> full trên tài liệu thật 15 trang (263 regions, 7/7 gates PASS). Giới hạn v1 ở §10.
+> **Trạng thái:** RELEASED v1.1.0 — scripts Milestone 1-4 core hoạt động, đã E2E-test
+> full trên tài liệu thật 15 trang (263 regions, 7/7 gates PASS). Portable đa agent
+> (Claude Code / Codex / Antigravity — §9). Giới hạn v1 ở §11.
 > **Spec nguồn:** PDF Translation Engine v1 (rev 1.4) — tài liệu thiết kế nội bộ; kiến trúc tóm tắt trong [README](README.md)
-> **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
+> **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
 
 ## 1. Nguyên Tắc Bắt Buộc
 
@@ -32,6 +37,8 @@ optional:
   --customer-facing       # bật chế độ nghiêm ngặt (mục 5)
   --job <job_id>          # resume job đã có
   --source-lang en --target-lang vi   # default en→vi
+  --provider-model <id>   # model id thật của agent dịch stage 4 — ghi vào determinism
+                          # tuple (vd claude-fable-5, gpt-5.2-codex, gemini-3-pro)
 ```
 
 **Output (luôn ghi, kể cả khi preflight REJECTED/MANUAL_DTP_REQUIRED):**
@@ -94,6 +101,7 @@ job_id = <slug(pdf_stem)>__<source_sha8>__<UTC yyyymmddThhmmss>
 | 8 | approve | `scripts/approve.py --approver <name>` | `decisions.jsonl`, promote `output/` |
 
 - Mỗi stage idempotent; resume = chạy stage kế tiếp còn thiếu; mọi stage mở đầu bằng verify fingerprint.
+- **Stage 4 chạy bởi chính agent của session** (Claude Code / Codex / Antigravity) bằng model của session — không gọi API ngoài, không cần API key riêng. Agent truyền model id thật qua `--provider-model` khi tạo job (mục 2).
 - **Batching stage 4:** mỗi batch chứa region theo reading order kèm type/neighbors/container hint; **không cắt batch giữa cross-page continuation group**; không nhét cả PDF vào một turn.
 - **Explicit line break:** `\n` trong text của target run = hard break (giữ cấu trúc label/value); fitter tôn trọng, validator/QA so sánh sau khi collapse whitespace.
 - Translation memory: chỉ seed TM từ jobs đã **approved**.
@@ -121,20 +129,56 @@ So sánh resource/visual dùng **content digest + geometric tolerance (~1pt)** v
 
 ## 8. Environment
 
-- Python 3 + `pymupdf==1.27.2.3` (pin; đổi version phải chạy lại golden tests).
-- Dev local trong Claude Code: `~/.claude/skills/.venv/bin/python3`.
+- **Resolve interpreter — một lệnh, mọi agent, mọi máy:**
+
+  ```bash
+  bash scripts/setup.sh          # in `PYTHON=<path>`; tự tạo .venv trong skill folder nếu cần
+  bash scripts/setup.sh --check  # chỉ kiểm tra, không cài (exit 3 nếu thiếu env)
+  ```
+
+  Thứ tự ưu tiên: `$PDFTL_PYTHON` → `<skill>/.venv/bin/python3` → python3 hệ thống thỏa pin.
+  Agent PHẢI dùng đúng `$PYTHON` này cho mọi stage script — không hardcode đường dẫn
+  interpreter của riêng agent nào.
+- Deps trong [requirements.txt](requirements.txt) — Python >= 3.10; `pymupdf==1.27.2.3` pin cứng
+  (đổi pymupdf phải chạy lại golden tests; dep phụ dùng floor version, setup.sh chỉ enforce pin pymupdf).
+- **Runtime offline:** network chỉ cần một lần lúc `setup.sh` cài deps.
 - `assets/fonts/`: Noto pack **đã bundle** — 10 static faces (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic), SHA-256 pinned trong `fonts_manifest.json`, full Vietnamese coverage đã test kể cả dấu chồng (spec §7.2).
 
-## 9. Package Layout (planned)
+## 9. Chạy Đa Agent (Claude Code / Codex / Antigravity)
+
+Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một folder, hành vi
+đồng nhất trên cả ba agent. Không cấu hình gì thêm ngoài đăng ký discovery:
+
+| Agent | Discovery trong repo này | Cài global (mọi workspace) | Gọi skill |
+|---|---|---|---|
+| Claude Code | `<git root>/.claude/skills/` và `.agents/skills/` (symlink sẵn) | `~/.claude/skills/` | auto theo description hoặc `/pdf-translate-layout` |
+| Codex CLI/IDE | `<git root>/.agents/skills/` (tìm từ cwd → repo root) | `~/.agents/skills/` | `/skills`, gõ `$pdf-translate-layout`, hoặc auto |
+| Antigravity | `<workspace root>/.agents/skills/` | `~/.gemini/config/skills/` | auto theo description hoặc mention tên skill |
+
+- Đăng ký: `bash scripts/install.sh repo` (symlink tại git root — đã chạy sẵn cho repo này),
+  `bash scripts/install.sh global`, `bash scripts/install.sh status`. Tool không theo
+  symlink → thêm `--copy`.
+- Antigravity mở **subfolder** làm workspace (vd `V16 Battery/`) sẽ không thấy
+  `.agents/` ở git root — dùng bản global.
+- **Quy tắc parity:** agent nào cũng chạy đúng các stage script §4 qua shell với `$PYTHON`
+  từ `setup.sh`; stage 4 agent tự dịch in-session và ghi model id qua `--provider-model`;
+  không agent nào được tự approve (mục 1.2) hay tự đặt tọa độ text (mục 1.5).
+- Codex sandbox: scripts chỉ đọc/ghi trong workspace và job folder — không cần escalation;
+  chỉ `setup.sh` lần đầu cần network approval.
+
+## 10. Package Layout
 
 ```text
 pdf-translate-layout/
 ├── SKILL.md
-├── LICENSE                     # AGPL-3.0
 ├── README.md
 ├── CHANGELOG.md
-├── requirements.txt
+├── LICENSE                     # AGPL-3.0
+├── requirements.txt            # deps (pymupdf pin cứng; Python >= 3.10)
+├── .gitignore                  # .venv/, __pycache__/, *.lock
 ├── scripts/
+│   ├── setup.sh                # resolve/bootstrap interpreter (§8)
+│   ├── install.sh              # đăng ký discovery đa agent (§9)
 │   ├── _common.py              # job infra: identity, lock, status machine, summary
 │   ├── preflight.py            # stage 1
 │   ├── extract_group.py        # stage 2
@@ -145,13 +189,13 @@ pdf-translate-layout/
 │   ├── approve.py              # stage 8
 │   └── selftest.py             # pure-function tests
 └── assets/
-    ├── fonts/                  # Noto pack 10 faces + fonts_manifest.json (SHA-256)
+    ├── fonts/                  # Noto pack 10 faces + fonts_manifest.json (SHA-256) + OFL.txt
     ├── engine_config_default.yaml
     ├── default_glossary.csv
     └── domain_context.template.md
 ```
 
-## 10. Giới Hạn v1 (đã chủ ý, theo supported envelope của spec)
+## 11. Giới Hạn v1 (đã chủ ý, theo supported envelope của spec)
 
 - Painting qua `insert_text` per-segment (không dùng `insert_htmlbox`); justified
   alignment chưa hỗ trợ — map về left/center/right.
