@@ -228,12 +228,15 @@ Quy tắc bắt buộc (validator sẽ reject nếu vi phạm):
 6. Số và đơn vị giữ định dạng nguồn (đã nằm trong placeholder MEAS/MODEL).
 7. `\n` trong text của target run = explicit line break (xuống dòng cứng); dùng khi
    cần giữ cấu trúc dòng như label/value hoặc danh sách trong một cell.
-8. **BẢN DỊCH PHẢI DO MODEL CỦA SESSION DỊCH TRỰC TIẾP, TỪNG REQUEST.** CẤM sinh
-   `responses.jsonl` bằng script, dictionary tra cứu, hay find-replace — kể cả
-   "để cho nhanh". Engine đo tỷ lệ region chưa dịch (target trùng source) và
-   region sai ngôn ngữ đích: vượt 5% (config `translation.authenticity`) → P0 `TRANSLATION_COVERAGE_FAIL`,
-   KHÔNG waive được, job không bao giờ release. Khối lượng lớn → dịch theo batch
-   trong `batches.json`, nhiều turn; không được đi tắt.
+8. **MỌI bản dịch phải do model của session sinh ra, cho TỪNG request.** CẤM mọi
+   logic dịch nằm trong code: dictionary/bảng tra cứu tự chế, find-replace, hay
+   fallback copy-source. Script (nếu dùng) CHỈ được là phương tiện GHI các bản
+   dịch model đã sinh sẵn — embedded verbatim, không biến đổi — và phải nằm trong
+   job folder, KHÔNG nằm trong `scripts/` của skill package. Placeholder lệch →
+   sửa bản dịch đó, không silently fallback. Engine đo authenticity (target trùng
+   source / sai ngôn ngữ đích): vượt 5% (`translation.authenticity`) → P0
+   `TRANSLATION_COVERAGE_FAIL`/`TARGET_LANG_FAIL`, KHÔNG waive được, không thể
+   release. Khối lượng lớn → dịch theo batch trong `batches.json`, nhiều turn.
 
 ## Domain context
 

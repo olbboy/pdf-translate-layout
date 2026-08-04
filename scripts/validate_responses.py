@@ -42,8 +42,12 @@ def validate(job: Job) -> None:
     auth = authenticity_cfg(cfg)
     target_lang = cfg["languages"]["target"]
     issues: list[dict] = []
-    n_ok = n_fail = n_ident = n_lang = 0
+    n_ok = n_fail = 0
     seen: set[str] = set()
+    # Authenticity theo TRẠNG THÁI CUỐI của từng region — không đếm theo dòng.
+    # Workflow chuẩn cho phép append bản sửa (bản sau ghi đè bản trước): dòng cũ
+    # identical không được tính nữa khi đã có bản sửa hợp lệ phía sau.
+    auth_flags: dict[str, tuple[str | None, int | None]] = {}
 
     for resp in responses:
         rid = resp.get("region_id", "")
@@ -115,18 +119,11 @@ def validate(job: Job) -> None:
                 n_fail += 1
                 break
         else:
-            # Authenticity (chống copy-through — spec sự cố 2026-08-04): flag P1
-            # per-region, tổng hợp thành P0 blocking sau vòng lặp khi vượt ngưỡng.
-            auth_flag = authenticity_check(req["source_text"], target_pl,
-                                           target_lang, auth["min_words"])
-            if auth_flag == "identical":
-                n_ident += 1
-                fail("TRANSLATION_IDENTICAL",
-                     "region đáng dịch nhưng target trùng source (chưa dịch)")
-            elif auth_flag == "lang_suspect":
-                n_lang += 1
-                fail("TARGET_LANG_SUSPECT",
-                     f"target gần như không có chữ tiếng {target_lang} — nghi chưa dịch/dịch máy lỗi")
+            # Authenticity (chống copy-through — sự cố 2026-08-04): ghi flag theo
+            # region, dòng sau ghi đè dòng trước; phát issue sau vòng lặp.
+            auth_flags[rid] = (authenticity_check(req["source_text"], target_pl,
+                                                  target_lang, auth["min_words"]),
+                               reg.get("page"))
             mapping = reg.get("placeholders", {})
             reg["target_runs"] = norm_runs
             reg["target_text"] = nfc(PH_RE.sub(
@@ -138,6 +135,20 @@ def validate(job: Job) -> None:
                 "notes": resp.get("notes", []),
             }
             n_ok += 1
+
+    # Phát per-region authenticity issue theo trạng thái cuối (sau mọi ghi đè).
+    n_ident = n_lang = 0
+    for rid, (flag, page) in auth_flags.items():
+        if flag == "identical":
+            n_ident += 1
+            issues.append(make_issue("TRANSLATION_IDENTICAL", "P1", STAGE,
+                                     "region đáng dịch nhưng target trùng source (chưa dịch)",
+                                     page=page, region_id=rid))
+        elif flag == "lang_suspect":
+            n_lang += 1
+            issues.append(make_issue("TARGET_LANG_SUSPECT", "P1", STAGE,
+                                     f"target gần như không có chữ tiếng {target_lang} — "
+                                     "nghi chưa dịch/dịch máy lỗi", page=page, region_id=rid))
 
     # Job-level authenticity gate — P0, KHÔNG waive được (approve.py chặn mọi P0).
     n_resp = max(1, len(seen))

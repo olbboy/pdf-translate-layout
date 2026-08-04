@@ -9,11 +9,34 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import sys
 
 from _common import (BlockingError, Job, append_jsonl, exit_blocking, load_json,
                      sha256_file, utc_now)
 
 STAGE = "approve"
+
+
+def require_human_terminal(job: Job) -> None:
+    """Human-gate cho approve (SKILL.md §1.2) — enforce bằng code, mọi platform.
+
+    Sự cố 2026-08-04 (2 lần): agent tự approve với tên người ("User", "User/Agent")
+    và waive hàng loạt. Code không thể xác thực danh tính, nhưng có thể yêu cầu
+    một terminal tương tác + gõ chuỗi thử thách — điều agent session headless
+    (Claude Code / Codex / Antigravity) không có. Giới hạn thành thật: một agent
+    chủ đích vẫn có thể giả PTY; hàng rào này chặn agent "tiện tay", không thay
+    được kỷ luật vận hành.
+    """
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise BlockingError(
+            "approve yêu cầu CON NGƯỜI chạy trực tiếp trong terminal (stdin/stdout "
+            "không phải TTY — đây là agent session). Agent không bao giờ được approve "
+            "(SKILL.md §1.2). Reviewer mở terminal và tự chạy lệnh approve.")
+    sha8 = job.load()["determinism"]["source_sha256"][:8]
+    challenge = f"APPROVE {sha8}"
+    print(f"Xác nhận human approval — gõ đúng chuỗi: {challenge}")
+    if input("> ").strip() != challenge:
+        raise BlockingError("chuỗi xác nhận không khớp — approve hủy")
 
 
 def main() -> None:
@@ -70,6 +93,7 @@ def main() -> None:
                 print("revoked — output đã thu hồi, đã ghi decisions.jsonl")
                 return
 
+            require_human_terminal(job)  # reject/revoke không cần — chỉ approve mới release
             if qa.get("partial"):
                 raise BlockingError("bản render là partial (dev run) — không thể release")
             issues = job.collect_issues()

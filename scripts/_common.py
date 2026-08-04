@@ -16,7 +16,7 @@ import unicodedata
 
 import yaml
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.2.2"
 LAYOUT_MODEL_VERSION = "lg-basic-2"
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -121,7 +121,9 @@ def load_default_config() -> dict:
 # Sự cố 2026-08-04: agent thay stage 4 bằng script dictionary → 76% target trùng
 # source. Các heuristic dưới đây là input cho P0 gate không waive được.
 _AUTH_PH_RE = re.compile(r"⟦[A-Z]+_\d+⟧")
-_AUTH_WORD_RE = re.compile(r"[A-Za-zÀ-ỹ]{3,}")
+# [^\W\d_] = unicode letter thuần — KHÔNG dùng dải À-ỹ vì nó chứa cả ký hiệu ×, ÷
+_AUTH_WORD_RE = re.compile(r"[^\W\d_]{3,}")
+_AUTH_LETTER_RE = re.compile(r"[^\W\d_]")
 _AUTH_VI_RE = re.compile(r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọ"
                          r"ốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]", re.IGNORECASE)
 
@@ -138,6 +140,12 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
     """
     src = _AUTH_PH_RE.sub(" ", source)
     tgt = _AUTH_PH_RE.sub(" ", target)
+    # URL/email là nội dung không dịch — loại khỏi phép đo để không làm nhiễu
+    # word-count lẫn tỷ lệ dấu tiếng Việt (edge: gate2 đo trên text đã restore
+    # placeholder nên URL thật xuất hiện trong target).
+    _noise = re.compile(r"(?:https?://|www\.)\S+|\S+@\S+\.\S+")
+    src = _noise.sub(" ", src)
+    tgt = _noise.sub(" ", tgt)
     if len(_AUTH_WORD_RE.findall(src)) < min_words:
         return None  # label/số/địa chỉ ngắn — identical hợp lệ
     src_c = re.sub(r"\s+", " ", src).strip().lower()
@@ -145,7 +153,7 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
     if src_c == tgt_c:
         return "identical"
     if target_lang == "vi":
-        alpha = re.findall(r"[A-Za-zÀ-ỹ]", tgt)
+        alpha = _AUTH_LETTER_RE.findall(tgt)
         if len(alpha) >= 20 and len(_AUTH_VI_RE.findall(tgt)) / len(alpha) < 0.05:
             return "lang_suspect"
     return None

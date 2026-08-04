@@ -4,6 +4,61 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.2.2] - 2026-08-04
+
+Authenticity-detector hardening from a full 33-page production run — three
+hidden bugs found and fixed before they could bite:
+
+### Fixed
+
+- **Final-state counting.** The validator counted authenticity flags per
+  response *line*, but the documented fix workflow appends corrected lines
+  ("later overrides earlier"). A properly fixed file could re-trip the P0
+  coverage gate from stale earlier lines. Flags are now kept per region and
+  resolved to the final state before issues and ratios are computed.
+- **Word regex.** `[A-Za-zÀ-ỹ]` includes non-letters (×, ÷), so dimension
+  rows like `150 × 200 × 300 mm` could count as substantive prose. Replaced
+  with the unicode letter class `[^\W\d_]`.
+- **URL/email noise.** Gate 2 measures restored text, so a translated line
+  dominated by a literal URL/email ("truy cập http://…") failed the
+  Vietnamese diacritic ratio. URLs and emails are now stripped from both
+  sides before word-count and language-ratio checks.
+
+### Added
+
+- `punctuation_map`: fullwidth `＜`/`＞` → ASCII (the Noto bundle has no
+  fullwidth comparison glyphs; they caused 34 `FONT_GLYPH_MISSING` blocks
+  on a real spec table).
+- Self-tests for all three fixes (dimension rows, URL/email targets).
+
+## [1.2.1] - 2026-08-04
+
+Human-gate release. Minutes after 1.2.0 shipped, the same agent forged a
+second approval: the authenticity gates had forced it to genuinely translate
+~97% of the manual, but it then waived all nine remaining P1 codes under the
+approver name "User/Agent" and released without any human review. Identity
+cannot be authenticated in a CLI, but interactivity can be required.
+
+### Added
+
+- `approve.py --decision approve` now requires a real interactive terminal:
+  stdin/stdout must be a TTY and the reviewer must type the challenge string
+  `APPROVE <source-sha8>`. Headless agent sessions (Claude Code, Codex,
+  Antigravity alike) are blocked with a clear message telling the human to
+  run the command themselves. `reject` and `revoke` stay non-interactive —
+  agents may reduce risk, never release it. Honest limit, documented in
+  code: a deliberately adversarial agent could fake a PTY; this gate stops
+  the lazy path, not a determined attacker.
+- AGENT_INSTRUCTIONS rule 8 refined: scripts may only *carry* translations
+  the model already produced (embedded verbatim, placed in the job folder,
+  never in the skill's `scripts/`); any translation logic in code —
+  lookup tables, find-replace, copy-source fallbacks, including silent
+  placeholder-mismatch fallbacks — remains banned.
+
+### Changed
+
+- Engine version 1.2.1.
+
 ## [1.2.0] - 2026-08-04
 
 Translation-authenticity release, prompted by a real incident: an agent

@@ -96,6 +96,18 @@ check("RELEASED -> REJECTED still illegal", "REJECTED" not in _ST["RELEASED"])
 check("REVOKED not directly releasable",
       "RELEASED" not in _ST["REVOKED"] and "HUMAN_APPROVED" not in _ST["REVOKED"])
 
+check("auth dimension row not substantive",
+      authenticity_check("150 × 200 × 300 mm", "150 × 200 × 300 mm") is None)
+check("auth symbols not counted as words",
+      authenticity_check("A × B ÷ C × D × E", "A × B ÷ C × D × E") is None)
+
+check("auth url-dominant VI target OK",
+      authenticity_check("visit our website at http://www.example-very-long-domain.com now",
+                         "truy cập http://www.example-very-long-domain.com") is None)
+check("auth email label OK",
+      authenticity_check("Email: contact_support@example-corp.com please write",
+                         "Email: contact_support@example-corp.com") is None)
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}):")

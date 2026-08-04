@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills — chạy trên Claude Code, OpenAI Codex, Google Antigravity (và agent tương thích SKILL.md khác). Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.2.0 — scripts Milestone 1-4 core hoạt động, đã E2E-test
+> **Trạng thái:** RELEASED v1.2.1 — scripts Milestone 1-4 core hoạt động, đã E2E-test
 > full trên tài liệu thật 15 trang (263 regions, 7/7 gates PASS). Portable đa agent
 > (Claude Code / Codex / Antigravity — §9), có authenticity gates chống
 > pseudo-translation (§1.6, §7). Giới hạn v1 ở §11.
@@ -19,11 +19,11 @@ metadata:
 ## 1. Nguyên Tắc Bắt Buộc
 
 1. **Fail-closed:** input ngoài supported envelope tạo issue có mã; không silent fallback, không rasterize ngầm.
-2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve; auto-QA pass chỉ tạo `render/draft.pdf`. Release sai có thể thu hồi: `approve.py --decision revoke` → status `REVOKED`, xoá output, cho phép re-run stage 4-8.
+2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve — **enforce bằng code:** `approve.py --decision approve` yêu cầu terminal tương tác (TTY) + gõ chuỗi xác nhận `APPROVE <sha8>`; agent session headless trên mọi platform bị chặn, reviewer phải tự chạy lệnh trong terminal. Auto-QA pass chỉ tạo `render/draft.pdf`. Release sai có thể thu hồi: `approve.py --decision revoke` (không cần TTY) → status `REVOKED`, xoá output, cho phép re-run stage 4-8.
 3. **Artifact là source of truth:** mọi run kết thúc bằng job folder trên disk, không chỉ chat text.
 4. **Source immutable:** không bao giờ sửa PDF gốc; mỗi render ghi file mới.
 5. Scripts đảm nhiệm phần deterministic (extract, fit, paint, QA); agent đảm nhiệm dịch và điều phối. Agent không tự đặt tọa độ text.
-6. **Authenticity (enforce bằng code, không chỉ văn bản):** bản dịch stage 4 PHẢI do model của session sinh cho từng request — CẤM sinh `responses.jsonl` bằng script/dictionary/find-replace. Validator + Gate 2 đo tỷ lệ region đáng dịch có target trùng source hoặc sai ngôn ngữ đích; vượt ngưỡng (`translation.authenticity`, default 5%) → **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` — không waive được, không thể release** (sự cố Antigravity 2026-08-04).
+6. **Authenticity (enforce bằng code, không chỉ văn bản):** bản dịch stage 4 PHẢI do model của session sinh cho từng request — CẤM mọi logic dịch nằm trong code (dictionary/bảng tra cứu tự chế, find-replace, fallback copy-source). Script chỉ được là **phương tiện ghi** các bản dịch model đã sinh sẵn (embedded verbatim), đặt trong job folder — không đặt trong `scripts/` của skill. Validator + Gate 2 đo tỷ lệ region đáng dịch có target trùng source hoặc sai ngôn ngữ đích; vượt ngưỡng (`translation.authenticity`, default 5%) → **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` — không waive được, không thể release** (sự cố Antigravity 2026-08-04).
 
 ## 2. I/O Contract
 
@@ -164,8 +164,9 @@ Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một f
   `.agents/` ở git root — dùng bản global.
 - **Quy tắc parity:** agent nào cũng chạy đúng các stage script §4 qua shell với `$PYTHON`
   từ `setup.sh`; stage 4 agent tự dịch in-session và ghi model id qua `--provider-model`;
-  không agent nào được tự approve (mục 1.2), tự đặt tọa độ text (mục 1.5), hay sinh
-  bản dịch bằng script/dictionary (mục 1.6 — P0 không waive được).
+  không agent nào được tự approve (mục 1.2 — enforce: approve đòi TTY người thật),
+  tự đặt tọa độ text (mục 1.5), hay sinh bản dịch bằng script/dictionary
+  (mục 1.6 — P0 không waive được).
 - Codex sandbox: scripts chỉ đọc/ghi trong workspace và job folder — không cần escalation;
   chỉ `setup.sh` lần đầu cần network approval.
 
