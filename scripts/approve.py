@@ -17,6 +17,23 @@ from _common import (BlockingError, Job, append_jsonl, exit_blocking, load_json,
 STAGE = "approve"
 
 
+def stage_release_copy(draft: str, out: str) -> str:
+    """Copy draft → `<out>.part`, tự tạo thư mục đích nếu chưa có. Trả về đường dẫn tạm.
+
+    `Job.p()` chỉ ghép chuỗi đường dẫn, không tạo thư mục. Job chưa từng phát hành thì
+    `output/` chưa tồn tại và `shutil.copyfile` ném `FileNotFoundError` — sự cố thật
+    2026-08-06 trên hai job Lite, trong khi job V16 lại chạy được vì đã có `output/` từ
+    lần phát hành trước, nên lỗi ẩn suốt.
+
+    Ghi vào tên tạm để bước đổi tên cuối cùng là thao tác nguyên tử: `output/` không bao
+    giờ chứa `translated-approved.pdf` trước khi trạng thái thật sự là RELEASED.
+    """
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    tmp = out + ".part"
+    shutil.copyfile(draft, tmp)
+    return tmp
+
+
 def require_human_terminal(job: Job) -> None:
     """Human-gate cho approve (SKILL.md §1.2) — enforce bằng code, mọi platform.
 
@@ -106,17 +123,21 @@ def main() -> None:
                 raise BlockingError(
                     f"còn P1 chưa resolved/waived: {p1_left} — reviewer phải xử lý "
                     "hoặc --waive CODE=REASON (spec §10.8)")
-            if job.status() in ("AUTO_QA_PASS", "NEEDS_REVIEW"):
-                job.set_status("HUMAN_APPROVED",
-                               f"approver={args.approver} waived={sorted(waivers)}")
-                job.set_status("RELEASED")
-            else:
+            if job.status() not in ("AUTO_QA_PASS", "NEEDS_REVIEW"):
                 raise BlockingError(
                     f"status {job.status()} không thể approve — cần NEEDS_REVIEW/AUTO_QA_PASS. "
                     "Nếu vừa chạy lại validate: chạy tiếp fit_paint.py rồi qa_gates.py "
                     "(validate luôn hạ về TRANSLATED vì render cũ không còn được đảm bảo khớp).")
+            # Ghi artifact TRƯỚC, lật trạng thái SAU, rồi mới đổi tên vào chỗ chính thức.
+            # Thứ tự cũ (lật trạng thái trước, copy sau) fail-OPEN: 2026-08-06 copyfile ném
+            # FileNotFoundError vì `output/` chưa tồn tại, và hai job đã kịp mang trạng thái
+            # RELEASED mà không có bản phát hành nào — đúng thứ không bao giờ được phép xảy ra.
             out = job.p("output", "translated-approved.pdf")
-            shutil.copyfile(job.p("render", "draft.pdf"), out)
+            tmp = stage_release_copy(job.p("render", "draft.pdf"), out)
+            job.set_status("HUMAN_APPROVED",
+                           f"approver={args.approver} waived={sorted(waivers)}")
+            job.set_status("RELEASED")
+            os.replace(tmp, out)
             job.mark_stage(STAGE)
             job.write_summary(f"RELEASED — output: `output/translated-approved.pdf` "
                               f"(approver {args.approver}, {utc_now()})")

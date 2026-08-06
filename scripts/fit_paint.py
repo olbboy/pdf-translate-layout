@@ -13,11 +13,17 @@ import statistics
 
 import pymupdf
 
-from _common import (FONTS_DIR, BlockingError, Job, exit_blocking, load_json, make_issue,
-                     save_json, utc_now)
+from _common import (CONTAINER_TOL_Y_EM_DEFAULT, FONTS_DIR, BlockingError, Job, exit_blocking,
+                     refuse_if_released,
+                     load_json, make_issue, save_json, utc_now)
 
 STAGE = "fit_paint"
 PH_RE = re.compile(r"⟦([A-Z]+_\d+)⟧")
+# Biên vệt mực quanh baseline, tính theo em. `painted_rect` khai báo vùng này cho Gate 6,
+# và Gate 4 đo mép dưới ô bằng chính nó — nên ngân sách dọc của fitter PHẢI trừ đúng
+# `INK_DESCENT_EM`, nếu không fitter tưởng vừa còn gate lại báo tràn.
+INK_ASCENT_EM = 1.3
+INK_DESCENT_EM = 0.45
 SUBSET_PREFIX_RE = re.compile(r"^[A-Z]{6}\+")
 # Family quen thuộc — style-class mapping đáng tin; ngoài list = display font
 # → review trigger theo spec §11.4.
@@ -100,13 +106,21 @@ def tokenize(reg: dict) -> list[dict]:
     return tokens
 
 
-def wrap_lines(widths: list[float], space_w: float, max_w: float) -> list[list[int]] | None:
-    """Greedy wrap token indices theo width; None nếu một token > max_w."""
+def wrap_lines(widths: list[float], space_w, max_w: float) -> list[list[int]] | None:
+    """Greedy wrap token indices theo width; None nếu một token > max_w.
+
+    `space_w` là một số (mọi khe cùng bề rộng) hoặc list cùng độ dài `widths`, phần tử i là
+    bề rộng khe ĐỨNG SAU token i. Dạng list cần cho dòng trộn font: dấu cách được vẽ bằng
+    font của chính segment chứa nó, nên khe sau token mono rộng khác khe sau token sans.
+    """
+    def gap(i: int) -> float:
+        return space_w[i] if isinstance(space_w, (list, tuple)) else space_w
+
     lines, cur, cur_w = [], [], 0.0
     for i, w in enumerate(widths):
         if w > max_w + 0.1:
             return None
-        add = w if not cur else w + space_w
+        add = w if not cur else w + gap(i - 1)
         if cur and cur_w + add > max_w + 0.1:
             lines.append(cur)
             cur, cur_w = [i], w
@@ -125,8 +139,106 @@ def role_style(reg: dict, role: str) -> dict:
     return reg["runs"][0]
 
 
-def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]:
-    """→ (fit_result, issues). None nếu không có layout hợp lệ (fail-closed)."""
+HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")
+# Tựa được coi là "căn giữa theo trang" khi tâm chữ nguồn lệch tâm trang không quá ngần này.
+CENTERED_TOL_PT = 3.0
+
+
+def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
+                     margins: tuple[float, float], align: str) -> tuple[list, str | None] | None:
+    """→ (container nới rộng, alignment mới) cho region một dòng không đủ chỗ, hoặc None.
+
+    Vì sao cần: khung của region lấy theo bbox chữ NGUỒN. Tiếng Việt dài hơn tiếng Anh, nên
+    một heading vừa khít ở bản gốc thành FIT_IMPOSSIBLE ở bản dịch dù quanh nó là khoảng
+    trắng. Ca thật: tựa bìa `User Manual` (158pt) → `Hướng dẫn sử dụng` (250pt) trong khung
+    196.6pt, trong khi cả dải ngang của trang không có một vật cản nào.
+
+    Vì sao KHÔNG cho xuống thêm dòng: khung bìa cao 33.7pt, hai dòng cỡ 25.1pt cần 57.7pt —
+    thiếu chiều cao chứ không thiếu số dòng. Nới ngang là phép duy nhất khả thi ở đây.
+
+    Vì sao đặt ở stage 6 chứ không ở extract: `region_id` được sinh từ `container[0]//8` và
+    `container[1]//8` (extract_group), nên đổi container ở stage 2 sẽ đổi region_id và làm
+    mồ côi toàn bộ `responses.jsonl` đã dịch. Ở đây chỉ tính khung vẽ, id giữ nguyên.
+
+    Chỉ nới đúng bề rộng cần: nới hết khoảng trống sẽ đẩy chữ căn trái về sát mép trái, lệch
+    khỏi bố cục gốc.
+    """
+    b = reg["bbox"]
+    y0, y1 = b[1], b[3]
+    left_lim, right_lim = margins
+    for ob in obstacles:
+        if ob[3] <= y0 or ob[1] >= y1:      # không giao dải dọc của heading
+            continue
+        if ob[2] <= b[0]:
+            left_lim = max(left_lim, ob[2])
+        elif ob[0] >= b[2]:
+            right_lim = min(right_lim, ob[0])
+        else:
+            return None                      # vật cản chồng lên chính chữ → không nới
+    pad = 1.0
+    c = reg["container"]
+    cx_page = (page_rect[0] + page_rect[2]) / 2
+    centered = abs((b[0] + b[2]) / 2 - cx_page) <= CENTERED_TOL_PT
+    want = need_w + pad
+
+    def ok(x0: float, x1: float) -> bool:
+        return x0 >= left_lim and x1 <= right_lim and x1 - x0 > c[2] - c[0]
+
+    if centered:
+        # Tựa căn giữa theo trang: nới đối xứng VÀ chuyển sang alignment center. Text căn
+        # trái được vẽ từ `base_x` của span nguồn, nên nới khung mà giữ "left" thì chữ vẫn
+        # bắt đầu ở chỗ cũ và cụm dài hơn sẽ thò lệch sang phải so với bố cục gốc.
+        half = want / 2
+        if not ok(cx_page - half, cx_page + half):
+            return None
+        return [round(cx_page - half, 2), c[1], round(cx_page + half, 2), c[3]], "center"
+
+    # Hướng tự nhiên theo căn lề, rồi hướng ngược lại làm dự phòng. Ca thật: nhãn hình ở
+    # Lite p13 có đường chỉ dẫn chắn ngay bên phải (cách 5pt) nhưng bên trái còn ~45pt
+    # trống. Nới sang trái và neo mép phải giữ nguyên điểm nối của đường chỉ dẫn — đúng
+    # hơn là ép chữ nhỏ lại.
+    if align == "right":
+        # Text căn phải neo vào c[2]; nới sang phải sẽ đẩy chữ đi.
+        cands = [(c[2] - want, c[2], None), (c[0], c[0] + want, "left")]
+    else:
+        cands = [(c[0], c[0] + want, None), (c[2] - want, c[2], "right")]
+    for x0, x1, new_align in cands:
+        if ok(x0, x1):
+            return [round(x0, 2), c[1], round(x1, 2), c[3]], new_align
+    return None
+
+
+# Nhãn cạnh hình cũng cần nới: tiếng Việt dài hơn nên "Dry Contact" → "Tiếp điểm khô" tụt
+# còn 85% cỡ chữ trong ô 43.9pt, dù bên phải là khoảng trắng. Luật vật cản lo phần an toàn —
+# nhãn nào bị hình/leader line/nhãn anh em chắn thì tự động không nới được.
+EXPANDABLE_TYPES = ("heading", "figure_caption", "diagram_label")
+LABEL_MAX_WORDS = 4
+LABEL_MAX_CHARS = 40
+
+
+def expandable_region(reg: dict) -> bool:
+    """Region một dòng được phép nới khung: tiêu đề, nhãn hình, và hai ca bị extract xếp
+    nhầm — tiêu đề đánh số thành `list_item` (LIST_RE khớp `"5."` trong `"5.1.1 …"`), nhãn
+    ngắn cạnh hình thành `paragraph` (ca thật: `Dry Contact` ở Lite p13)."""
+    if reg["rotation"] != 0 or len(reg["lines"]) != 1:
+        return False
+    t = reg["source_text"].strip()
+    if reg["region_type"] in EXPANDABLE_TYPES:
+        return True
+    if reg["region_type"] == "list_item":
+        return bool(HEADING_NUM_RE.match(t))
+    if reg["region_type"] == "paragraph":
+        return len(t.split()) <= LABEL_MAX_WORDS and len(t) <= LABEL_MAX_CHARS
+    return False
+
+
+def fit_region(reg: dict, pack: FontPack, cfg: dict,
+               expand_ctx: dict | None = None) -> tuple[dict | None, list]:
+    """→ (fit_result, issues). None nếu không có layout hợp lệ (fail-closed).
+
+    `expand_ctx` (optional): `{"obstacles": [...], "page_rect": [...], "margins": (l, r)}`
+    cho phép nới khung heading khi bản dịch không vừa — xem `expand_heading_container`.
+    """
     issues = []
     tokens = tokenize(reg)
     if not tokens:
@@ -146,6 +258,15 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]
     cw, chh = c[2] - c[0], c[3] - c[1]
     if reg["rotation"] in (90, 270):
         cw, chh = chh, cw  # reading-direction extent
+
+    # Text căn trái được vẽ từ base_x (origin của span nguồn) chứ không từ mép
+    # container, nên ngân sách wrap phải trừ đúng phần thụt lề đó — nếu wrap theo
+    # cả cw thì dòng gần đầy sẽ thò khỏi mép phải bằng chính phần thụt.
+    # Center/right neo theo c[0]/c[2] nên bị chặn sẵn, giữ nguyên cw.
+    base_x, base_y = reg["lines"][0]["spans"][0]["origin"]
+    wrap_w = cw
+    if reg["rotation"] == 0 and reg["alignment"] == "left":
+        wrap_w = max(c[2] - base_x, 1.0)
 
     # resolve font/coverage per token
     tok_font: list[str] = []
@@ -171,11 +292,22 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]
         leading_ratio = 1.15
     leading_ratio = max(1.02, leading_ratio)
     single_line_src = len(reg["lines"]) == 1
+    desc_tol_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
+
+    # Ngân sách dọc đo từ BASELINE DÒNG ĐẦU xuống đáy container, không phải chiều cao
+    # container: chữ được vẽ từ `base_y` (origin của span nguồn) chứ không từ mép trên, nên
+    # phần nằm trên base_y không dùng để chứa dòng nào. Đối xứng với `wrap_w = c[2] - base_x`
+    # của lg-basic-3. Dùng `chh` như cũ khiến fitter tưởng còn chỗ, dòng cuối tràn xuống
+    # hàng bảng bên dưới — nguồn của phần lớn G4_OUT_OF_CONTAINER.
+    avail_h = max(1.0, c[3] - base_y) if reg["rotation"] == 0 else chh
 
     def layout_at(s: float):
         widths = [pack.font(k).text_length(t["text"], fontsize=s)
                   for t, k in zip(tokens, tok_font)]
-        space_w = pack.font(tok_font[0]).text_length(" ", fontsize=s)
+        # Khe SAU token i được vẽ bằng font của token i (segment gộp `t1 + " " + t2` bằng
+        # font của segment). Lấy chung font token đầu region làm lệch tới 2.38pt/khe khi
+        # dòng trộn sans/mono — bốn khe là lệch 9.5pt, đủ để dòng thò khỏi ô.
+        space_ws = [pack.font(k).text_length(" ", fontsize=s) for k in tok_font]
         # wrap từng đoạn giữa các explicit break rồi ghép
         segments, cur = [], []
         for i, t in enumerate(tokens):
@@ -186,31 +318,72 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]
         segments.append(cur)
         lines = []
         for seg in segments:
-            sub = wrap_lines([widths[i] for i in seg], space_w, cw)
+            sub = wrap_lines([widths[i] for i in seg], [space_ws[i] for i in seg], wrap_w)
             if sub is None:
                 return None
             lines += [[seg[j] for j in line] for line in sub]
         n = len(lines)
-        max_lines = max(1, int(chh // (leading_ratio * s)))
+        # Dòng đầu nằm ngay tại base_y nên chỉ (n-1) dòng tiếp theo mới ăn vào ngân sách.
+        # Đáy vệt mực = baseline cuối + INK_DESCENT_EM (đúng thứ Gate 4 đo), được phép vượt
+        # đáy container tối đa `desc_tol_em`. Viết thành một bất đẳng thức để fitter và gate
+        # không bao giờ lệch nhau.
+        budget = avail_h + (desc_tol_em - INK_DESCENT_EM) * s
+        max_lines = max(1, int(budget // (leading_ratio * s)) + 1)
         if single_line_src and n > max_lines:
             return None
-        if n * leading_ratio * s > chh + 0.6 * s:  # descent tolerance
+        if (n - 1) * leading_ratio * s > budget:
             return None
-        return {"lines": lines, "widths": widths, "space_w": space_w}
+        return {"lines": lines, "widths": widths, "space_ws": space_ws}
 
-    lo, hi, best = floor, src_size, None
-    if layout_at(hi):
-        best, s_fit = layout_at(hi), hi
-    else:
-        s_fit = None
+    def run_search():
+        lo, hi, best_, s_ = floor, src_size, None, None
+        if layout_at(hi):
+            return layout_at(hi), hi
         for _ in range(24):  # binary search max size thỏa constraints (spec §6.8)
             mid = (lo + hi) / 2
             if layout_at(mid):
-                lo, best, s_fit = mid, layout_at(mid), mid
+                lo, best_, s_ = mid, layout_at(mid), mid
             else:
                 hi = mid
             if hi - lo < 0.05:
                 break
+        return best_, s_
+
+    align = reg["alignment"]
+    best, s_fit = run_search()
+    # Nới khung cũng phải kích hoạt khi heading CHỈ bị co chữ, không riêng khi fit thất bại
+    # hẳn: "7.1 Unable to Start" → "7.1 Không Khởi Động Được" tụt còn 86.4% cỡ chữ (P1
+    # FONT_RATIO_HARD) trong khi bên phải nó cả dải ngang là khoảng trắng.
+    poor_fit = best is not None and s_fit / src_size < cfg["fonts"]["review_below_ratio"]
+    if (best is None or poor_fit) and expand_ctx and expandable_region(reg):
+        # Bề rộng cần cho một dòng ở đúng cỡ chữ nguồn (heading luôn một dòng).
+        need_w = (sum(pack.font(k).text_length(t["text"], fontsize=src_size)
+                      for t, k in zip(tokens, tok_font))
+                  + sum(pack.font(k).text_length(" ", fontsize=src_size)
+                        for k in tok_font[:-1]))
+        got = expand_container(reg, need_w, expand_ctx["obstacles"],
+                               expand_ctx["page_rect"], expand_ctx["margins"], align)
+        if got:
+            new_c, new_align = got
+            keep = (c, cw, wrap_w, avail_h, align, best, s_fit)
+            old_w = c[2] - c[0]
+            c = new_c
+            cw = c[2] - c[0]
+            if new_align:
+                align = new_align
+            wrap_w = cw if align != "left" else max(c[2] - base_x, 1.0)
+            avail_h = max(1.0, c[3] - base_y)
+            got_best, got_s = run_search()
+            # Chỉ nhận khung nới khi nó thực sự tốt hơn — nới mà cỡ chữ không lên thì đừng
+            # đụng vào bố cục gốc.
+            if got_best is not None and (keep[5] is None or got_s > keep[6] + 0.01):
+                best, s_fit = got_best, got_s
+                issues.append(("CONTAINER_EXPANDED", "P2",
+                               f"khung nới {old_w:.1f}→{cw:.1f}pt vào khoảng trống "
+                               f"đo được (align={align}); bản dịch dài hơn nguồn"))
+                reg["container_paint"] = c
+            else:
+                c, cw, wrap_w, avail_h, align, best, s_fit = keep
     if best is None:
         return None, issues + [("FIT_IMPOSSIBLE", "P1",
                                 f"không fit được trong container ngay tại floor "
@@ -222,30 +395,35 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]
         issues.append((code, "P1", f"ratio={ratio:.2%} (src {src_size}pt → {s_fit:.2f}pt)"))
 
     # dựng line segments với alignment + sub-run theo font
-    base_x, base_y = reg["lines"][0]["spans"][0]["origin"]
     leading = leading_ratio * s_fit
     out_lines = []
     for li, idxs in enumerate(best["lines"]):
-        lw = sum(best["widths"][i] for i in idxs) + best["space_w"] * (len(idxs) - 1)
-        if reg["alignment"] == "center":
+        # Bề rộng dòng = tổng token + các khe THẬT giữa chúng (khe sau token idxs[k]).
+        lw = (sum(best["widths"][i] for i in idxs)
+              + sum(best["space_ws"][i] for i in idxs[:-1]))
+        if align == "center":
             x = c[0] + (cw - lw) / 2 if reg["rotation"] == 0 else base_x
-        elif reg["alignment"] == "right":
+        elif align == "right":
             x = c[2] - lw if reg["rotation"] == 0 else base_x
         else:
             x = base_x if reg["rotation"] == 0 else base_x
         y = base_y + li * leading
         segs, cx = [], x
         cur = None
-        for i in idxs:
+        for pos, i in enumerate(idxs):
             t, k, w = tokens[i], tok_font[i], best["widths"][i]
             color = role_style(reg, t["role"])["color"]
+            prev = idxs[pos - 1] if pos else None
+            # Khe đứng trước token này là khe SAU token liền kề bên trái.
+            gap = best["space_ws"][prev] if prev is not None else 0.0
             if cur and cur["font"] == k and cur["color"] == color:
                 cur["text"] += " " + t["text"]
-                cur["width"] += best["space_w"] + w
+                cur["width"] += gap + w
             else:
-                cur = {"x": cx, "text": t["text"], "font": k, "color": color, "width": w}
+                cur = {"x": cx + gap if cur else cx, "text": t["text"], "font": k,
+                       "color": color, "width": w}
                 segs.append(cur)
-            cx = cur["x"] + cur["width"] + best["space_w"]
+            cx = cur["x"] + cur["width"]
         out_lines.append({"y": round(y, 2), "x": round(x, 2), "width": round(lw, 2),
                           "segments": [{k2: (round(v, 2) if isinstance(v, float) else v)
                                         for k2, v in s2.items()} for s2 in segs]})
@@ -254,11 +432,36 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict) -> tuple[dict | None, list]
                                 "text xoay nhiều dòng chưa hỗ trợ v1 — needs review")]
     return {"size": round(s_fit, 2), "src_size": round(src_size, 2),
             "ratio": round(ratio, 4), "leading": round(leading, 2),
-            "alignment": reg["alignment"], "rotation": reg["rotation"],
+            "alignment": align, "rotation": reg["rotation"],
             "lines": out_lines}, issues
 
 
 # ── safe painting (spec §9) ─────────────────────────────────────────────
+
+def painted_rect(line: dict, fr: dict) -> list:
+    """Hộp bao vệt mực của một dòng đã vẽ, theo góc xoay.
+
+    QA Gate 6 lấy đây làm vùng "được phép đổi pixel". Text xoay chạy theo trục
+    dọc: đo thực tế với insert_text(rotate=270) thì mực trải từ origin xuống
+    dưới đúng bằng bề rộng dòng và chỉ loe ngang chưa tới 1em — dùng công thức
+    ngang sẽ khai báo sai chỗ, khiến mực thật bị tính là diff ngoài mask.
+    Biên 1.3/0.45 em bao dấu chồng tiếng Việt (Ầ, Ễ) và descender.
+    """
+    s, rot = fr["size"], fr["rotation"]
+    y, lw = line["y"], line["width"]
+    a, d = INK_ASCENT_EM * s, INK_DESCENT_EM * s
+    if rot == 90:
+        r = (line["x"] - a, y - lw - d, line["x"] + d, y + d)
+    elif rot == 180:
+        r = (line["x"] - lw, y - d, line["x"], y + a)
+    elif rot == 270:
+        r = (line["x"] - d, y - d, line["x"] + a, y + lw + d)
+    else:
+        x0 = min(sg["x"] for sg in line["segments"])
+        x1 = max(sg["x"] + sg["width"] for sg in line["segments"])
+        r = (x0, y - a, x1, y + d)
+    return [round(v, 2) for v in r]
+
 
 def span_mask(span: dict, pad: float) -> pymupdf.Rect:
     b = span["bbox"]
@@ -280,15 +483,34 @@ def build_masks(reg: dict, protected: list[pymupdf.Rect], cfg: dict) -> tuple[li
                     rect = cand
                     break
             if rect is None:
-                # char-level: bỏ các char giao vùng bảo vệ khỏi mask → conflict
-                issues.append(("MASK_CONFLICT", "P1",
-                               f"mask span {span['text'][:16]!r} chạm text giữ nguyên"))
-                return [], issues
+                # Pad 0 vẫn chạm vùng giữ nguyên → cắt mask theo chiều NGANG cho hết chồng
+                # lấn, thay vì bỏ cả region. Bỏ cả region nghĩa là chữ gốc ở nguyên trên
+                # trang: ca thật p6 dòng mục lục "2.5 Current Limit Table ....." bị bỏ vì
+                # dải chấm chạm ô số trang (region `keep`), nên cả dòng còn tiếng Anh trong
+                # bản giao khách dù bản dịch có sẵn.
+                cand = span_mask(span, 0.0)
+                for p in protected:
+                    if not cand.intersects(p):
+                        continue
+                    if p.x1 >= cand.x1 and p.x0 > cand.x0:      # vùng bảo vệ ở bên phải
+                        cand.x1 = min(cand.x1, p.x0)
+                    elif p.x0 <= cand.x0 and p.x1 < cand.x1:    # ở bên trái
+                        cand.x0 = max(cand.x0, p.x1)
+                if (cand.is_empty or cand.width < 1.0
+                        or any(cand.intersects(p) for p in protected)):
+                    issues.append(("MASK_CONFLICT", "P1",
+                                   f"mask span {span['text'][:16]!r} chạm text giữ nguyên"))
+                    return [], issues
+                issues.append(("MASK_CLIPPED", "P2",
+                               f"mask span {span['text'][:16]!r} bị cắt ngang để tránh text "
+                               "giữ nguyên — vài ký tự nguồn ở mép có thể còn hiện"))
+                rect = cand
             rects.append(rect)
     return rects, issues
 
 
 def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
+    refuse_if_released(job, STAGE)
     model = load_json(job.p("model", "regions.json"))
     if not model:
         raise BlockingError("chưa có regions.json")
@@ -317,13 +539,34 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
     for r in paintable:
         by_page.setdefault(r["page"], []).append(r)
 
+    # Lề tài liệu = mép trái/phải thật của thân bài, đo trên các trang nội dung (bỏ bìa vì
+    # bìa có bố cục riêng). Nới khung heading không bao giờ được vượt lề này.
+    body = [r["bbox"] for r in regions if r["page"] > 0]
+    doc_margins = ((min(b[0] for b in body), max(b[2] for b in body)) if body
+                   else (0.0, doc[0].rect.x1))
+    expand_on = cfg.get("layout", {}).get("expand_heading", True)
+
     for pno, regs in sorted(by_page.items()):
         page = doc[pno]
         links_before = page.get_links()
 
+        expand_ctx = None
+        if expand_on:
+            # Vật cản = chữ của mọi region khác trên trang + vector + ảnh. Đọc từ trang
+            # NGUỒN nên độc lập với thứ tự paint.
+            obstacles = [r["bbox"] for r in regions if r["page"] == pno]
+            obstacles += [list(d["rect"]) for d in page.get_drawings()]
+            obstacles += [list(page.get_image_bbox(i)) for i in page.get_images(full=True)]
+            expand_ctx = {"obstacles": obstacles, "page_rect": list(page.rect),
+                          "margins": doc_margins}
+
         fitted: list[tuple[dict, dict]] = []
         for reg in regs:
-            fr, fissues = fit_region(reg, pack, cfg)
+            if expand_ctx is not None:
+                # bbox của chính region không phải vật cản của nó
+                expand_ctx["obstacles"] = [b for b in expand_ctx["obstacles"]
+                                           if b is not reg["bbox"]]
+            fr, fissues = fit_region(reg, pack, cfg, expand_ctx)
             for code, sev, det in fissues:
                 issues.append(make_issue(code, sev, STAGE, det,
                                          page=pno, region_id=reg["region_id"]))
@@ -411,13 +654,8 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             "painted_regions": len(ok_regions),
             "mask_rects": [[round(v, 2) for v in (m.x0, m.y0, m.x1, m.y1)]
                            for m in page_masks],
-            # 1.3/0.45 em: bao cả dấu chồng tiếng Việt (Ầ, Ễ) và descender
-            "text_rects": [[round(v, 2) for v in (
-                min(s["x"] for s in l["segments"]),
-                l["y"] - 1.3 * fr2["size"],
-                max(s["x"] + s["width"] for s in l["segments"]),
-                l["y"] + 0.45 * fr2["size"])]
-                for _, fr2 in ok_regions for l in fr2["lines"]],
+            "text_rects": [painted_rect(l, fr2)
+                           for _, fr2 in ok_regions for l in fr2["lines"]],
         }
 
     # optimized save (spec §6.10) — native subsetting, không cần fontTools

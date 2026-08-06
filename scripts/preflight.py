@@ -15,7 +15,7 @@ import sys
 
 import pymupdf
 
-from _common import (ASSETS_DIR, ENGINE_VERSION, LAYOUT_MODEL_VERSION, BlockingError, Job,
+from _common import (ASSETS_DIR, ENGINE_VERSION, BlockingError, Job, layout_model_for,
                      exit_blocking, load_default_config, make_issue, new_job_id, save_json,
                      sha256_file, sha256_text, utc_now)
 
@@ -112,7 +112,7 @@ def create_or_open_job(args) -> Job:
             "config_sha256": sha256_text(_json.dumps(cfg, sort_keys=True)),
             "font_pack": cfg["fonts"]["pack"],
             "font_pack_sha256": sha256_file(fonts_manifest) if os.path.exists(fonts_manifest) else None,
-            "layout_model_version": LAYOUT_MODEL_VERSION,
+            "layout_model_version": layout_model_for(cfg),
             "provider_model_version": cfg["translation"]["provider_model_version"],
             "prompt_version": cfg["translation"]["prompt_version"],
             "pymupdf_version": pymupdf.version[0],

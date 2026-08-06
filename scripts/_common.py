@@ -14,10 +14,66 @@ import re
 import sys
 import unicodedata
 
+import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.3.0"
-LAYOUT_MODEL_VERSION = "lg-basic-2"
+ENGINE_VERSION = "1.8.4"
+# Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
+# cross-block các dòng cùng đoạn.
+# lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
+# space có vạch kẻ dọc thật nằm trong khe (không còn đòi ≥2 space, không còn dùng lưới
+# logic của find_tables).
+LAYOUT_MODEL_VERSION = "lg-basic-5"
+# lg-basic-6: lg-basic-5 + gộp CROSS-BLOCK các dòng cùng một đoạn. PDF hay đặt mỗi dòng vào
+# một block rawdict riêng (thư ngỏ V16: 28 dòng = 28 block), mà `group_block_lines` chỉ gộp
+# trong một block, nên câu bị xé theo dòng và bản dịch không đảo vế qua ranh giới được.
+LAYOUT_MODEL_MERGED = "lg-basic-6"
+
+
+def layout_model_for(cfg: dict) -> str:
+    """Layout model thực tế phụ thuộc cờ gộp đoạn — regions.json của cùng một source khác
+    hẳn nhau giữa hai chế độ, nên determinism tuple phải phân biệt được."""
+    return (LAYOUT_MODEL_MERGED
+            if (cfg.get("layout") or {}).get("merge_paragraph", True)
+            else LAYOUT_MODEL_VERSION)
+
+# Dung sai container — fit_paint (được phép dôi ra) và qa_gates (chấp nhận phần
+# dôi đó) PHẢI đọc cùng con số, nếu không fitter tạo layout mà gate tự báo lỗi.
+# Config `qa.container_tol_*` override; hằng này là default cho job cũ thiếu key.
+CONTAINER_TOL_PT_DEFAULT = 1.5
+CONTAINER_TOL_Y_EM_DEFAULT = 0.6
+
+
+def vertical_rules(page: pymupdf.Page, tol: float = 0.8) -> list:
+    """Nét kẻ dọc THỰC SỰ vẽ trên trang → [(x, y0, y1)].
+
+    Dùng nét vẽ chứ không dùng lưới logic của `find_tables`: ô gộp không có nét
+    ngăn nên tiêu đề trải hết bảng là hợp lệ, trong khi lưới logic vẫn báo có
+    ranh giới cột ở đó và sinh false positive.
+
+    Đặt ở đây vì hai stage phải đọc CÙNG một danh sách: stage 2 cắt hàng đa cột tại
+    các vạch này, stage 7 lấy chính chúng làm chuẩn cho `G4_TABLE_RULE_CROSS`. Hai
+    định nghĩa lệch nhau thì fitter tạo layout mà gate tự báo lỗi.
+    """
+    out = []
+    for d in page.get_drawings():
+        stroked = d.get("type") in ("s", "fs")
+        for it in d["items"]:
+            if it[0] == "l":
+                p, q = it[1], it[2]
+                if abs(p.x - q.x) <= tol and abs(p.y - q.y) > 2:
+                    out.append(((p.x + q.x) / 2, min(p.y, q.y), max(p.y, q.y)))
+            elif it[0] == "re":
+                r = it[1]
+                if r.height <= 2:
+                    continue
+                if r.width <= 1.5:      # thanh mảnh dùng làm vạch kẻ
+                    out.append(((r.x0 + r.x1) / 2, r.y0, r.y1))
+                elif stroked:           # khung có viền → hai cạnh dọc
+                    out.append((r.x0, r.y0, r.y1))
+                    out.append((r.x1, r.y0, r.y1))
+    return out
+
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(SKILL_ROOT, "assets")
@@ -39,11 +95,36 @@ STATUS_TRANSITIONS = {
     "CANCELLED": set(),
 }
 
+# Status mà stage 2/3/5 chạy lại được. `REVOKED` có trong danh sách vì thu hồi tồn tại để
+# sửa lỗi của bản đã phát hành — kể cả lỗi LAYOUT, mà sửa layout thì bắt buộc re-run từ
+# stage 2. Trước 1.8.0 chỉ `validate_responses` nhận REVOKED, hai stage kia thì không, nên
+# thu hồi xong là bế tắc. Mọi status ở đây phải đi tới được TRANSLATED (xem selftest).
+RERUNNABLE_STATUSES = ("PREFLIGHTED", "NEEDS_REVIEW", "REVOKED")
+
 SEVERITIES = ("P0", "P1", "P2")
 
 
 class BlockingError(Exception):
     """Fail-closed: lỗi chặn stage; caller thoát exit code 2."""
+
+
+def refuse_if_released(job, stage: str) -> None:
+    """Chặn stage render/QA chạy trên job đã RELEASED.
+
+    Vì sao: `approve.py` **copy** `render/draft.pdf` sang `output/translated-approved.pdf`.
+    Chạy lại `fit_paint` sau đó làm draft đổi mà file trong `output/` giữ nguyên — job vẫn
+    ghi RELEASED trong khi file mang nhãn "approved" là bản cũ. Sự cố thật 2026-08-06: bản
+    phát hành thiếu đúng ba sửa đổi vừa được yêu cầu, chỉ phát hiện nhờ so sha256 bằng tay.
+
+    Muốn sửa tiếp thì `approve.py --decision revoke` trước — revoke tự đổi tên output thành
+    `REVOKED-<ts>.pdf` nên dấu vết luôn khớp trạng thái. Muốn thử engine mới trên bản đã phát
+    hành thì chạy trên BẢN SAO của job.
+    """
+    if job.status() == "RELEASED":
+        raise BlockingError(
+            f"{stage}: job đang RELEASED — chạy lại sẽ làm render/draft.pdf lệch khỏi "
+            "output/translated-approved.pdf đã duyệt. Thu hồi trước "
+            "(`approve.py --decision revoke`), hoặc thử nghiệm trên bản sao của job.")
 
 
 def utc_now() -> str:
@@ -129,7 +210,7 @@ _AUTH_VI_RE = re.compile(r"[ăâđêôơưáàảãạấầẩẫậắằẳ�
 
 
 def authenticity_check(source: str, target: str, target_lang: str = "vi",
-                       min_words: int = 4) -> str | None:
+                       min_words: int = 4, keep_terms=()) -> str | None:
     """Phân loại một cặp source/target của translate-region.
 
     Trả về:
@@ -137,12 +218,32 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
       "identical"    — region đáng dịch nhưng target trùng source (chưa dịch)
       "lang_suspect" — target dài nhưng gần như không có chữ tiếng Việt
                        (chỉ xét khi target_lang == "vi")
-      "truncated"    — target mất khối lượng nội dung so với source (sự cố
-                       2026-08-04 #3: mục an toàn 147→29 từ; VI chuẩn giữ
-                       >=70% số từ EN, dưới 45% = nghi nuốt nội dung)
+      "truncated"    — target mất khối lượng nội dung so với source. Hai mức:
+                       (a) source >=6 từ mà target <45% — sự cố 2026-08-04 #3
+                           (mục an toàn 147→29 từ) và 2026-08-05 (câu miễn trừ
+                           trách nhiệm 11 từ bị ghi đè bằng tiêu đề 3 từ — sàn
+                           cũ 12 từ để lọt đúng vì thiếu 1 từ);
+                       (b) source >=12 từ mà target <60% — audit bản Lite đã
+                           RELEASED tìm thấy 9 region mất nguyên câu an toàn
+                           (cấm ngắn mạch, cấm nối tiếp, tiếp địa, Bước 1 lắp
+                           đặt) đều nằm ở ratio 0.45–0.59, trong khi mọi cột
+                           dịch đạt không có cặp nào dưới 0.60. Bản dịch VI
+                           chuẩn của tài liệu này giữ >=75% số từ EN.
     """
     src = _AUTH_PH_RE.sub(" ", source)
     tgt = _AUTH_PH_RE.sub(" ", target)
+    # Region mà source CHỈ gồm thuật ngữ `keep` của glossary thì giữ nguyên là đúng, không
+    # phải "chưa dịch". Ca thật: `Shanghai PYTES Energy Co., Ltd.` — glossary ghi rõ keep vì
+    # là tên pháp nhân, nhưng Gate 2 vẫn báo TRANSLATION_IDENTICAL và làm gate đỏ.
+    # Chỉ bỏ qua khi KHÔNG còn từ nào ngoài các term đó; region lẫn văn xuôi vẫn được xét.
+    if keep_terms:
+        residue = src
+        for term in sorted(keep_terms, key=len, reverse=True):
+            if term:
+                residue = re.sub(rf"(?i)(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])",
+                                 " ", residue)
+        if not _AUTH_WORD_RE.findall(residue):
+            return None
     # URL/email là nội dung không dịch — loại khỏi phép đo để không làm nhiễu
     # word-count lẫn tỷ lệ dấu tiếng Việt (edge: gate2 đo trên text đã restore
     # placeholder nên URL thật xuất hiện trong target).
@@ -156,7 +257,10 @@ def authenticity_check(source: str, target: str, target_lang: str = "vi",
     if src_c == tgt_c:
         return "identical"
     src_w = len(_AUTH_WORD_RE.findall(src))
-    if src_w >= 12 and len(_AUTH_WORD_RE.findall(tgt)) < 0.45 * src_w:
+    tgt_w = len(_AUTH_WORD_RE.findall(tgt))
+    if src_w >= 6 and tgt_w < 0.45 * src_w:
+        return "truncated"
+    if src_w >= 12 and tgt_w < 0.60 * src_w:
         return "truncated"
     if target_lang == "vi":
         alpha = _AUTH_LETTER_RE.findall(tgt)
@@ -249,6 +353,12 @@ class Job:
     def mark_stage(self, stage: str, state: str = "done") -> None:
         meta = self.load()
         meta.setdefault("stages", {})[stage] = {"state": state, "ts": utc_now()}
+        # Đóng dấu engine ở MỌI stage. 1.8.0 mới chỉ cho `extract_group` làm mới, nên job
+        # chạy tiếp fit_paint/qa/approve bằng engine mới hơn vẫn khai engine của lần extract
+        # cuối — đo được 2026-08-06: ba job khai 1.8.0 trong khi render và QA do 1.8.1/1.8.2
+        # sinh ra. Tuple determinism phải tả đúng engine đã chạm vào job lần cuối, nếu không
+        # người tái lập job sẽ checkout nhầm phiên bản.
+        meta.setdefault("determinism", {})["engine_version"] = ENGINE_VERSION
         self.save(meta)
 
     # ── structured log (spec §16) ──

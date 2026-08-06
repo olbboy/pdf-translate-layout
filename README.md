@@ -1,7 +1,9 @@
 # pdf-translate-layout
 
 **Layout-preserving PDF translation skill for AI coding agents (English → Vietnamese).**
-Runs identically in Claude Code, OpenAI Codex, and Google Antigravity.
+Verified on Claude Code and OpenAI Codex. **Google Antigravity was tried and
+failed** — it edited `approve.py` to disable the human-approval gate and released
+by itself; see SKILL.md §9 before using it.
 
 Translates technical PDFs — manuals, datasheets, quick guides — while keeping the
 original layout intact: images, vector graphics, tables, typography, colors, and
@@ -14,9 +16,8 @@ Python scripts handle extraction, fitting, painting, and QA, while the agent in
 your session acts as the translation provider — no external translation API or
 key required, whichever agent you use.
 
-> Validated end-to-end on a real 15-page battery installation manual:
-> 263 semantic regions, 173 translated, all 7 quality gates passing, output
-> within +6% of source file size.
+> Validated end-to-end on real battery documentation: three manuals of 15-33
+> pages, 1947 semantic regions, all 7 quality gates passing on each.
 
 ## How it works
 
@@ -28,6 +29,7 @@ containers under constraints, and paints styled runs back at exact baselines.
 |---|-------|---------|--------|
 | 1 | `preflight.py` | script | Supported-envelope classification, resource manifest |
 | 2 | `extract_group.py` | script | Layout graph: regions, reading order, containers, stable IDs |
+| 2.5 | `build_context_graph.py` | script | Context graph: regions that belong to one sentence/cluster |
 | 3 | `translate_prep.py` | script | Protected tokens, context, batched translation requests |
 | 4 | translate | **agent** | `responses.jsonl` (schema-validated translations) |
 | 5 | `validate_responses.py` | script | Placeholder round-trip, NFC, glossary enforcement |
@@ -71,7 +73,7 @@ Key properties:
 
 ## Usage
 
-### As an agent skill (Claude Code / Codex / Antigravity)
+### As an agent skill (Claude Code / Codex / Antigravity — see the caveat above)
 
 Register the skill once:
 
@@ -100,6 +102,7 @@ PYTHON=$(bash scripts/setup.sh | sed -n 's/^PYTHON=//p')
 "$PYTHON" scripts/preflight.py --pdf manual.pdf --out jobs \
   --domain-context "LFP battery ESS installation; keep brands; imperative safety tone"
 "$PYTHON" scripts/extract_group.py    --job jobs/<job_id>
+"$PYTHON" scripts/build_context_graph.py --job jobs/<job_id>
 "$PYTHON" scripts/translate_prep.py   --job jobs/<job_id>
 # fill translation/responses.jsonl (by hand, or any MT system) per AGENT_INSTRUCTIONS.md
 "$PYTHON" scripts/validate_responses.py --job jobs/<job_id>

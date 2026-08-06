@@ -16,8 +16,10 @@ import numpy as np
 import pymupdf
 from PIL import Image, ImageDraw
 
-from _common import (BlockingError, Job, authenticity_cfg, authenticity_check,
-                     exit_blocking, load_json, make_issue, save_json, utc_now)
+from _common import (CONTAINER_TOL_PT_DEFAULT, CONTAINER_TOL_Y_EM_DEFAULT, BlockingError, Job,
+                     authenticity_cfg, authenticity_check, exit_blocking, load_glossary,
+                     load_json, make_issue, save_json, utc_now, refuse_if_released,
+                     vertical_rules)
 from preflight import merge_rects
 
 STAGE = "qa"
@@ -28,6 +30,15 @@ def norm(s: str) -> str:
     return WS_RE.sub(" ", unicodedata.normalize("NFC", s)).strip()
 
 
+def nospace(s: str) -> str:
+    """Bỏ sạch khoảng trắng — dùng khi so chuỗi mà bề rộng dấu cách không đáng tin.
+
+    Hàng bảng nhiều cột dính lỗi `space_w` (engine 1.4.0) khiến trích xuất ghép/tách từ sai
+    chỗ ("từ xa" → "từxa"), tuy chữ vẽ ra vẫn đủ và đúng vị trí.
+    """
+    return WS_RE.sub("", unicodedata.normalize("NFC", s))
+
+
 def rect_of(fr_line: dict, size: float) -> pymupdf.Rect:
     x0 = min(s["x"] for s in fr_line["segments"])
     x1 = max(s["x"] + s["width"] for s in fr_line["segments"])
@@ -35,6 +46,7 @@ def rect_of(fr_line: dict, size: float) -> pymupdf.Rect:
 
 
 def run_gates(job: Job) -> None:
+    refuse_if_released(job, STAGE)
     cfg = job.config
     model = load_json(job.p("model", "regions.json"))
     manifest = load_json(job.p("render", "render_manifest.json"))
@@ -76,12 +88,13 @@ def run_gates(job: Job) -> None:
     # region đáng dịch mà target trùng source / không phải target-lang.
     auth = authenticity_cfg(cfg)
     target_lang = cfg["languages"]["target"]
+    keep_terms = [g["term"] for g in load_glossary(job) if g["type"] == "keep"]
     translated = [r for r in regions.values()
                   if r["translation_action"] == "translate" and r.get("target_text")]
     same, lang_bad, truncated, same_short = [], [], [], []
     for r in translated:
         flag = authenticity_check(r["source_text"], r["target_text"],
-                                  target_lang, auth["min_words"])
+                                  target_lang, auth["min_words"], keep_terms)
         if flag == "identical":
             same.append(r)
         elif flag == "lang_suspect":
@@ -123,15 +136,37 @@ def run_gates(job: Job) -> None:
 
     # ── Gate 3: rendered-text coverage (spec §10.3) ──
     g3_fail = 0
+    # Mép dưới phải nới đúng bằng descent slack mà fit_paint được phép dùng — cùng công
+    # thức Gate 4 dùng ở dưới. Cửa sổ đọc cũ cố định 2pt, trong khi slack là 0.6em (5.4pt
+    # ở cỡ chữ 9pt), nên dòng cuối của region nhiều dòng nằm ngoài vùng đọc và gate báo
+    # "target không thấy" dù chữ có thật trên trang. Đo 2026-08-05 trên bản V16 Lite:
+    # 11/11 P0 của gate này là báo giả, mốc V16 manual dính thêm 2 ca cùng kiểu.
+    g3_tol_pt = cfg["qa"].get("container_tol_pt", CONTAINER_TOL_PT_DEFAULT)
+    g3_tol_y_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
     for pr in painted:
         reg = regions[pr["region_id"]]
-        clip = pymupdf.Rect(reg["container"]) + (-2, -2, 2, 2)
+        # Ngang và mép trên giữ chặt như cũ; chỉ mép dưới nới theo cỡ chữ đã fit.
+        slack = max(2.0, g3_tol_pt, g3_tol_y_em * (pr.get("size") or 0))
+        clip = pymupdf.Rect(reg.get("container_paint") or reg["container"]) + (-2, -2, 2, slack)
         got = norm(draft[reg["page"]].get_text("text", clip=clip))
         want = norm(reg["target_text"])
-        if want and want not in got:
-            g3_fail += 1
-            gi("G3_TARGET_NOT_FOUND", "P0", f"target không thấy trong output: {want[:60]!r}",
-               page=reg["page"], region_id=reg["region_id"])
+        if not want or want in got:
+            continue
+        # Gate 3 đo ĐỘ PHỦ: bản dịch có lên được trang không. Hình học là việc của Gate 4.
+        # Cửa sổ clip theo container là phép đo mong manh — nó trượt khi chân chữ dòng cuối
+        # thò quá slack, và khi hàng bảng nhiều cột bị lỗi space_w làm chuỗi trích xuất lệch
+        # dấu cách. Đo 2026-08-05 trên 5 cột dịch: 23/23 P0 của gate này là báo giả, chữ có
+        # thật trên trang. Thiếu hẳn chữ mới là P0; lệch khung hạ xuống P2 để reviewer đối
+        # chiếu cùng cảnh báo hình học của Gate 4.
+        page_txt = norm(draft[reg["page"]].get_text())
+        if want in page_txt or nospace(want) in nospace(page_txt):
+            gi("G3_TARGET_OUTSIDE_BOX", "P2",
+               f"target có trên trang nhưng ngoài khung container — xem G4 cùng region: "
+               f"{want[:50]!r}", page=reg["page"], region_id=reg["region_id"])
+            continue
+        g3_fail += 1
+        gi("G3_TARGET_NOT_FOUND", "P0", f"target không thấy trong output: {want[:60]!r}",
+           page=reg["page"], region_id=reg["region_id"])
     for r in regions.values():
         if r["translation_action"] == "keep" and r["page"] in painted_pages \
                 and r["source_text"].strip():
@@ -167,6 +202,8 @@ def run_gates(job: Job) -> None:
             g4_fail += 1
             gi("G4_PAGE_BOX", "P0", "mediabox/rotation thay đổi", page=pno)
     floor = cfg["fonts"]["minimum_ratio"]
+    tol_pt = cfg["qa"].get("container_tol_pt", CONTAINER_TOL_PT_DEFAULT)
+    tol_y_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
     for pr in painted:
         if pr["ratio"] < floor - 1e-6:
             g4_fail += 1
@@ -174,13 +211,62 @@ def run_gates(job: Job) -> None:
                page=pr["page"], region_id=pr["region_id"])
         reg = regions[pr["region_id"]]
         fr = reg.get("fit_result") or {}
-        cont = pymupdf.Rect(reg["container"]) + (-1.5, -1.5, 1.5, 1.5)
+        # Heading được nới khung ở stage 6 thì đo theo khung đã nới, nếu không mọi ca nới
+        # đều thành G4_OUT_OF_CONTAINER giả. `container` gốc giữ nguyên vì `region_id`
+        # sinh từ nó (extract_group) — xem `expand_heading_container`.
+        c = reg.get("container_paint") or reg["container"]
         for line in fr.get("lines", []):
+            if reg["rotation"] != 0:
+                continue
             lr = rect_of(line, fr["size"])
-            if reg["rotation"] == 0 and not cont.contains(lr):
+            # Ngang + mép trên: chặt. Tràn ngang mới là hại thật (cắt vạch cột,
+            # lấn ô kế) — RC2 từng ẩn ở đây nên không được nới.
+            over = {"trái": c[0] - lr.x0, "phải": lr.x1 - c[2], "trên": c[1] - lr.y0}
+            bad = {k: round(v, 2) for k, v in over.items() if v > tol_pt}
+            # Mép dưới: nới đúng bằng descent slack fit_paint được phép dùng,
+            # nếu không mọi region 1 dòng nguồn → 2 dòng dịch đều báo giả.
+            slack = max(tol_pt, tol_y_em * fr["size"])
+            under = lr.y1 - c[3]
+            if under > slack:
+                bad["dưới"] = round(under, 2)
+            if bad:
                 g4_fail += 1
-                gi("G4_OUT_OF_CONTAINER", "P1", f"line vượt container {list(lr)}",
+                gi("G4_OUT_OF_CONTAINER", "P1", f"line vượt container: {bad}",
                    page=pr["page"], region_id=pr["region_id"])
+            elif under > tol_pt:
+                gi("G4_BOTTOM_SLACK", "P2",
+                   f"dùng descent slack: vượt đáy {under:.2f}pt/{slack:.2f}pt cho phép",
+                   page=pr["page"], region_id=pr["region_id"])
+    # Text dịch không được cắt ngang vạch cột của bảng. Container check ở trên
+    # không bắt được trường hợp hàng bảng gõ liền bằng space: cả hàng thành một
+    # region nên container phủ nhiều cột và dòng vẽ vẫn "nằm trong" container sai.
+    for pno in painted_pages:
+        cells = [p for p in painted if p["page"] == pno
+                 and regions[p["region_id"]]["region_type"] == "table_cell"]
+        if not cells:
+            continue
+        try:
+            rules = vertical_rules(src[pno])
+        except Exception as e:
+            gi("G4_TABLE_GRID_UNAVAILABLE", "P2", f"không đọc được nét kẻ: {e}", page=pno)
+            continue
+        for pr in cells:
+            reg = regions[pr["region_id"]]
+            if reg["rotation"] != 0:
+                continue
+            fr = reg.get("fit_result") or {}
+            for line in fr.get("lines", []):
+                lr = rect_of(line, fr["size"])
+                hit = sorted({round(x, 1) for x, y0, y1 in rules
+                              if lr.x0 + 1.0 < x < lr.x1 - 1.0
+                              and y0 < lr.y1 - 0.5 and y1 > lr.y0 + 0.5})
+                if hit:
+                    g4_fail += 1
+                    gi("G4_TABLE_RULE_CROSS", "P1",
+                       f"dòng dịch cắt ngang vạch kẻ dọc tại x={hit}",
+                       page=pno, region_id=pr["region_id"])
+                    break
+
     for pno in painted_pages:
         line_rects = []
         for pr in [p for p in painted if p["page"] == pno]:

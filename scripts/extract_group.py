@@ -12,12 +12,17 @@ import statistics
 
 import pymupdf
 
-from _common import (LAYOUT_MODEL_VERSION, BlockingError, Job, exit_blocking, load_json,
-                     make_issue, nfc, save_json, sha256_text, utc_now)
+import build_context_graph as _cg
+from _common import (RERUNNABLE_STATUSES, BlockingError, Job, exit_blocking,
+                     layout_model_for, load_json, make_issue, nfc, save_json, sha256_text,
+                     utc_now, vertical_rules)
 
 STAGE = "extract_group"
 DIR_TO_ROT = {(1, 0): 0, (0, -1): 90, (-1, 0): 180, (0, 1): 270}
 LIST_RE = re.compile(r"^\s*(\d{1,2}[\.\)]|[a-z]\)|[•·▪–\-\*]\s|[①-⑳])")
+# Chữ hai bên khe cột được phép chờm lên vạch: bản gốc V16 p11 để "Recovery*" kết thúc
+# 0.45pt bên phải vạch 125.1. Nới quá thì khe từ thường sát mép ô cũng dính.
+RULE_GAP_TOL_PT = 1.5
 SENT_END = tuple(".!?:;…。")
 
 
@@ -52,6 +57,19 @@ def union(bs: list) -> list:
             round(max(b[2] for b in bs), 2), round(max(b[3] for b in bs), 2)]
 
 
+def ink_bbox(spans: list) -> list | None:
+    """bbox chỉ tính ký tự CÓ MỰC → None nếu cả line là khoảng trắng.
+
+    Space ở đầu/cuối dòng có advance nhưng không vẽ gì. Tính chúng vào bbox thì
+    container của ô bảng phình ra khỏi cột (`container = cell | bbox`), fitter wrap
+    theo bề rộng không có thật, và dòng dịch vượt qua vạch kẻ dọc. Ca thật: ô ghi chú
+    cột phải của V16 manual p26 thổi 7.5pt (3 space đuôi), Lite p30 thổi 2.5pt — mực
+    nguồn dừng ở 380.4/380.2, vạch kẻ ở 380.9/380.8, nhưng khung nới tới 387.4/382.2.
+    """
+    bs = [c["bbox"] for s in spans for c in s["chars"] if not c["c"].isspace()]
+    return union(bs) if bs else None
+
+
 def build_lines(page: pymupdf.Page) -> tuple[list, list]:
     """→ (lines, block_ids). Mỗi line: bbox, dir, wmode, block, spans[]."""
     raw = page.get_text("rawdict")
@@ -64,7 +82,8 @@ def build_lines(page: pymupdf.Page) -> tuple[list, list]:
             spans = [s for s in (span_from_raw(rs, ln) for rs in ln["spans"]) if s]
             if not spans or not "".join(s["text"] for s in spans).strip():
                 continue
-            lines.append({"bbox": [round(v, 2) for v in ln["bbox"]],
+            bb = ink_bbox(spans)
+            lines.append({"bbox": bb or [round(v, 2) for v in ln["bbox"]],
                           "dir": tuple(round(c, 3) for c in ln["dir"]),
                           "wmode": ln.get("wmode", 0), "block": bi, "spans": spans})
     return lines, blocks
@@ -194,6 +213,147 @@ def make_region(page_no: int, rtype: str, lines: list, confidence: float) -> dic
     }
 
 
+def merge_flow_regions(ordered: list, lh: float, pno: int) -> list:
+    """Gộp các region là những dòng liên tiếp của CÙNG một đoạn thành một region.
+
+    Vì sao cần: `group_block_lines` chỉ gộp trong một block rawdict, mà PDF hay đặt mỗi dòng
+    vào một block riêng — thư ngỏ V16 user manual là 28 dòng thành 28 block, khe thật giữa
+    chúng chỉ 2.72pt, thừa điều kiện gộp nếu chung block. Hệ quả: câu bị xé theo dòng, model
+    dịch từng mảnh và tiếng Việt không đảo vế qua ranh giới region được (RC-A).
+
+    Dùng CHUNG detector với context graph (`flow_link`) — một luật, hai mức áp dụng: graph
+    chỉ đưa chuỗi vào context, còn ở đây gộp thật để fitter được wrap lại tự do. Mọi guard
+    của graph (tiêu đề đánh số, mục lục, Table N, dòng nhãn-giá-trị, đầu chuỗi ≥4 từ) áp
+    nguyên vào đây — không có chúng thì 9/10 lần gộp ngoài trang thư ngỏ là gộp sai.
+    """
+    out: list = []
+    for reg in ordered:
+        prev = out[-1] if out else None
+        if (prev is not None and prev["rotation"] == 0 and reg["rotation"] == 0
+                and "container" not in prev and "container" not in reg
+                and _cg.flow_link(prev, reg, lh) is not None):
+            out.pop()
+            merged = make_region(pno, prev["region_type"],
+                                 prev["lines"] + reg["lines"],
+                                 min(prev["confidence"], reg["confidence"]))
+            merged["merged_lines"] = prev.get("merged_lines", 1) + 1
+            if prev.get("_hf_candidate") and reg.get("_hf_candidate"):
+                merged["_hf_candidate"] = True
+            out.append(merged)
+        else:
+            out.append(reg)
+    return out
+
+
+def fragment_row(line: dict, inner_edges: list) -> list:
+    """Cắt line tại MỌI cụm space CÓ vạch cột nằm trong khe → list line con.
+
+    Điều kiện "vạch cột nằm trong khe" là thứ phân biệt hàng bảng gõ liền bằng
+    space với văn xuôi trong ô: khe giữa hai từ không có vạch nào nên không bao giờ
+    bị cắt. Số lượng space thì KHÔNG phân biệt được — bản gốc V16 ngăn cột bằng một
+    space đơn, và khe cột hẹp nhất đo được (1.33pt) còn mảnh hơn khe từ thường
+    (2.50pt), nên chỉ hình học mới nói lên điều gì.
+    """
+    flat = [(ch, si) for si, sp in enumerate(line["spans"]) for ch in sp["chars"]]
+    if not flat or any(len(ch["c"]) != 1 for ch, _ in flat):
+        return [line]  # char nhiều ký tự → index lệch, không cắt
+    text = "".join(ch["c"] for ch, _ in flat)
+
+    cuts = []
+    for m in re.finditer(r"\s+", text):
+        a, b = m.span()
+        if a == 0 or b >= len(flat):
+            continue  # space rìa, không phải ranh giới cột
+        lo, hi = flat[a - 1][0]["bbox"][2], flat[b][0]["bbox"][0]
+        if any(lo - RULE_GAP_TOL_PT <= e <= hi + RULE_GAP_TOL_PT for e in inner_edges):
+            cuts.append((a, b))
+    if not cuts:
+        return [line]
+
+    segments, pos = [], 0
+    for a, b in cuts:
+        segments.append((pos, a))
+        pos = b
+    segments.append((pos, len(flat)))
+
+    frags = []
+    for a, b in segments:
+        chunk = flat[a:b]
+        while chunk and chunk[0][0]["c"].isspace():
+            chunk.pop(0)
+        while chunk and chunk[-1][0]["c"].isspace():
+            chunk.pop()  # chỉ cắt trắng hai đầu — space đơn bên trong là một phần từ
+        if not chunk:
+            continue
+        grouped: list[tuple[int, list]] = []
+        for ch, si in chunk:
+            if grouped and grouped[-1][0] == si:
+                grouped[-1][1].append(ch)
+            else:
+                grouped.append((si, [ch]))
+        spans = []
+        for si, chars in grouped:
+            src = line["spans"][si]
+            spans.append({
+                "text": "".join(c["c"] for c in chars),
+                "origin": list(chars[0]["origin"]),
+                "bbox": union([c["bbox"] for c in chars]),
+                "size": src["size"], "flags": src["flags"],
+                "font": src["font"], "color": src["color"], "chars": chars,
+            })
+        frags.append({"bbox": union([s["bbox"] for s in spans]), "dir": line["dir"],
+                      "wmode": line["wmode"], "block": line["block"], "spans": spans})
+    return frags or [line]
+
+
+def split_multicol_rows(lines: list, tables: list, rules: list, issues: list, pno: int) -> list:
+    """Hàng bảng gõ thành một dòng ngăn bằng space → tách theo vạch kẻ dọc.
+
+    Không tách thì cả hàng rơi vào một cell (gán theo tâm line) và container
+    phình qua nhiều cột, khiến bản dịch được vẽ đè lên vạch kẻ.
+
+    Ranh giới lấy từ nét vẽ thật (`vertical_rules`) chứ không từ lưới logic của
+    `find_tables`, và vạch phải cắt ngang đúng dải y của dòng mới tính: ô gộp không có
+    nét ngăn, lưới logic vẫn báo có ranh giới ở đó và sẽ xé đôi một tiêu đề trải hết
+    bảng. Đây cũng chính là danh sách Gate 4 dùng để chấm `G4_TABLE_RULE_CROSS`.
+    """
+    boxes = [pymupdf.Rect(t["bbox"]) for t in tables if t.get("cells")]
+    if not boxes or not rules:
+        return lines
+
+    out, n_split = [], 0
+    for line in lines:
+        b = line["bbox"]
+        centre = pymupdf.Point((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+        frags = [line]
+        if any(tb.contains(centre) for tb in boxes):
+            inner = sorted({round(x, 1) for x, y0, y1 in rules
+                            if y0 < b[3] - 0.5 and y1 > b[1] + 0.5
+                            and b[0] + 1 < x < b[2] - 1})
+            if inner:
+                frags = fragment_row(line, inner)
+        if len(frags) > 1:
+            n_split += 1
+        out.extend(frags)
+    if n_split:
+        issues.append(make_issue("TABLE_ROW_SPLIT", "P2", STAGE,
+                                 f"tách {n_split} dòng bảng gõ liền theo lưới cột",
+                                 page=pno))
+    out.sort(key=lambda l: (round(l["bbox"][1], 1), l["bbox"][0]))
+    return out
+
+
+def paint_origin_x(reg: dict) -> float:
+    """x mà fitter bắt đầu vẽ — origin của span đầu, KHÔNG phải mép ink.
+
+    Space đầu dòng không tính vào bbox (xem `ink_bbox`) nhưng vẫn là nơi text bắt đầu:
+    `fit_paint` vẽ từ `base_x = lines[0].spans[0].origin`. Container không bao được điểm
+    này thì mọi dòng thụt đầu — 19 dòng mục lục của Lite manual — thành
+    `G4_OUT_OF_CONTAINER` phía trái dù chữ nằm đúng chỗ cũ.
+    """
+    return reg["lines"][0]["spans"][0]["origin"][0]
+
+
 def compute_container(reg: dict, obstacles: list, page_rect: list, lh: float) -> None:
     b = pymupdf.Rect(reg["bbox"])
     limit = pymupdf.Rect(page_rect) + (6, 6, -6, -6)
@@ -223,6 +383,7 @@ def compute_container(reg: dict, obstacles: list, page_rect: list, lh: float) ->
                 left = min(b.x0, r.x1 + 2)
         if r.x0 < right and r.x1 > left and b.y1 <= r.y0 < bottom:
             bottom = max(b.y1, r.y0 - 2)
+    left = min(left, paint_origin_x(reg))
     reg["container"] = [round(left, 2), round(b.y0, 2), round(right, 2), round(bottom, 2)]
     reg["expansion_log"] = {"dx_right": round(right - b.x1, 2),
                             "dx_left": round(b.x0 - left, 2),
@@ -238,6 +399,8 @@ def extract(job: Job) -> None:
     issues: list[dict] = []
     doc = pymupdf.open(job.source_pdf)
     fp8 = job.load()["determinism"]["source_sha256"][:8]
+    merge_paragraph = (job.config.get("layout") or {}).get("merge_paragraph", True)
+    n_merged = 0
 
     pages_regions: list[list[dict]] = []
     for pno in range(doc.page_count):
@@ -259,6 +422,7 @@ def extract(job: Job) -> None:
         ph = page.rect.height
 
         tables = detect_tables(page, issues, pno)
+        lines = split_multicol_rows(lines, tables, vertical_rules(page), issues, pno)
         regions: list[dict] = []
         used = [False] * len(lines)
 
@@ -274,7 +438,8 @@ def extract(job: Job) -> None:
                 reg = make_region(pno, "table_cell", [lines[i] for i in idxs], 0.9)
                 # nguồn có thể tràn nhẹ khỏi cell do find_tables — container theo thực tế
                 cu = cr | pymupdf.Rect(reg["bbox"])
-                reg["container"] = [round(cu.x0 + 0.5, 2), round(cu.y0 + 0.5, 2),
+                reg["container"] = [round(min(cu.x0 + 0.5, paint_origin_x(reg)), 2),
+                                    round(cu.y0 + 0.5, 2),
                                     round(cu.x1 - 0.5, 2), round(cu.y1 - 0.5, 2)]
                 reg["expansion_log"] = {"cell": True}
                 regions.append(reg)
@@ -343,6 +508,14 @@ def extract(job: Job) -> None:
             ordered = sorted(horiz, key=lambda r: (round(r["bbox"][1] / 4), r["bbox"][0]))
         ordered += sorted(rot, key=lambda r: (r["rotation"], r["bbox"][1], r["bbox"][0]))
 
+        # 4b) gộp dòng cùng đoạn (lg-basic-4). Phải chạy TRƯỚC bước 5 vì region_id sinh từ
+        # container và chỉ số reading order — gộp sau khi gán id là đổi id của job đang chạy.
+        if merge_paragraph:
+            before = len(ordered)
+            ordered = merge_flow_regions(ordered, lh, pno)
+            if len(ordered) < before:
+                n_merged += before - len(ordered)
+
         # 5) container + alignment + id
         obstacles_all = img_boxes + draw_boxes
         for idx, reg in enumerate(ordered):
@@ -405,10 +578,12 @@ def extract(job: Job) -> None:
             fonts_usage[key]["chars"] += len(run["text"])
 
     meta = job.load()
-    meta["determinism"]["layout_model_version"] = LAYOUT_MODEL_VERSION
+    # Chỉ layout model là việc của stage này; `engine_version` do `Job.mark_stage` đóng dấu
+    # cho mọi stage (1.8.3).
+    meta["determinism"]["layout_model_version"] = layout_model_for(job.config)
     job.save(meta)
     save_json(job.p("model", "regions.json"),
-              {"generated_at": utc_now(), "layout_model": LAYOUT_MODEL_VERSION,
+              {"generated_at": utc_now(), "layout_model": layout_model_for(job.config),
                "region_count": len(flat), "regions": flat})
     save_json(job.p("model", "fonts.json"), {"usage": list(fonts_usage.values())})
     save_json(job.p("model", "regions_issues.json"), issues)
@@ -426,9 +601,9 @@ def main() -> None:
     args = ap.parse_args()
     job = Job(args.job)
     try:
-        if job.status() not in ("PREFLIGHTED", "NEEDS_REVIEW"):
-            raise BlockingError(f"status {job.status()} — cần PREFLIGHTED "
-                                "(hoặc NEEDS_REVIEW cho edit-and-rerender loop §11.5)")
+        if job.status() not in RERUNNABLE_STATUSES:
+            raise BlockingError(f"status {job.status()} — cần một trong "
+                                f"{', '.join(RERUNNABLE_STATUSES)} (§11.5)")
         job.verify_fingerprint()
         with job.acquire_lock(STAGE):
             extract(job)

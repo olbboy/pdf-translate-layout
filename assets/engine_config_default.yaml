@@ -25,6 +25,16 @@ fonts:
   minimum_ratio: 0.85           # hard floor §8.2
   review_below_ratio: 0.95
 
+layout:
+  # Heading một dòng không vừa khung được nới ngang vào khoảng trống ĐO ĐƯỢC trên trang
+  # (không có chữ/vector/ảnh nào trong dải), tối đa tới lề thân bài. Khung gốc và region_id
+  # giữ nguyên; khung vẽ ghi vào `container_paint`. Tắt cờ này → hành vi engine 1.5.1.
+  expand_heading: true
+  # Gộp CROSS-BLOCK các dòng cùng một đoạn thành một region (lg-basic-4). PDF hay đặt mỗi
+  # dòng vào một block rawdict riêng nên câu bị xé theo dòng và bản dịch không đảo vế qua
+  # ranh giới region được. Tắt → lg-basic-3, hành vi engine 1.6.0.
+  merge_paragraph: true
+
 render:
   pymupdf_version: "1.27.2.3"
   preserve_links: true
@@ -41,6 +51,11 @@ qa:
   diff_tile_fraction: 0.02      # tỷ lệ pixel khác để flag tile
   mask_halo_pt: 1.5
   output_size_budget_ratio: 3.0
+  # Dung sai container. Ngang + mép trên giữ chặt (tràn ngang là hại thật: cắt
+  # vạch cột, đè cột kế). Mép dưới nới đúng bằng phần descent mà fitter đã được
+  # phép dôi ra — fit_paint và qa_gates đọc CÙNG con số này để không bất đồng.
+  container_tol_pt: 1.5
+  container_tol_y_em: 0.6
 
 policy:
   require_domain_context: false # --customer-facing bật true (blocking)

@@ -11,12 +11,22 @@ import argparse
 import math
 import re
 
-from _common import (BlockingError, Job, append_jsonl, exit_blocking, load_glossary,
-                     load_json, make_issue, nfc, save_json, utc_now)
+from _common import (RERUNNABLE_STATUSES, BlockingError, Job, append_jsonl, exit_blocking,
+                     load_glossary, load_json, make_issue, nfc, save_json, utc_now)
 
 STAGE = "translate_prep"
 PH = "⟦{}⟧"  # ⟦TOKEN⟧
 PH_RE = re.compile(r"⟦([A-Z]+_\d+)⟧")
+# Chữ số dính liền CHỮ CÁI ngay cạnh placeholder. Bản gốc đặt sai dấu cách trong một số đo
+# thì `protect()` chỉ che được phần sau, phần chữ số đầu mắc lại trong từ bên cạnh và model
+# không còn nhận ra nó thuộc con số. Ca thật: V16 manual p25 in `is1 5V` (đúng ra `is1.5V`)
+# → masked thành `is1 ⟦MEAS_1⟧` → dịch ra "đạt 5V", mất chữ số 1. `NUMBER_DRIFT` bắt được
+# nhưng ở stage 5, sau khi model đã dịch sai; ở đây cảnh báo đi thẳng vào request.
+# Luật CHẶT (đòi chữ cái liền trước chữ số): đo trên 1243 vùng của 3 tài liệu — 1 đúng,
+# 0 oan. Bỏ điều kiện chữ cái thì dính hết số mục kiểu `6.1 ⟦MODEL_1⟧`: 19 cảnh báo, 18 oan.
+# CHỈ bắt chiều này. Chiều ngược (`⟦…⟧ 5V`) là dạng bình thường — placeholder rồi tới một số
+# đo — nên thêm vào chỉ đẻ báo oan, không có ca thật nào biện minh.
+PH_DIGIT_ADJ = re.compile(r"[A-Za-z]\d\s?⟦[A-Z]+_\d+⟧")
 
 NUMERIC_RE = re.compile(r"^[\d\s.,:/×xX+\-±%()~]+$")
 URL_RE = re.compile(r"(?:https?://|www\.)[^\s⟦⟧]+")
@@ -95,6 +105,16 @@ def prep(job: Job) -> None:
     if cfg["policy"]["require_domain_context"] and not domain_context:
         raise BlockingError("DOMAIN_CONTEXT_MISSING ở chế độ customer-facing — bổ sung rồi chạy lại")
 
+    # Context graph (stage 2.5) — optional: job cũ dựng trước 1.6.0 không có, vẫn chạy được.
+    graph = load_json(job.p("model", "context_graph.json"), {}) or {}
+    chain_by_id = {c["chain_id"]: c for c in graph.get("chains", [])}
+    under_heading = graph.get("under_heading", {})
+    co_figure_of: dict[str, list[str]] = {}
+    for e in graph.get("edges", []):
+        if e["type"] == "co_figure":
+            co_figure_of.setdefault(e["from"], []).append(e["to"])
+            co_figure_of.setdefault(e["to"], []).append(e["from"])
+
     req_path = job.p("translation", "requests.jsonl")
     open(req_path, "w").close()  # idempotent re-run: ghi lại từ đầu
 
@@ -131,6 +151,19 @@ def prep(job: Job) -> None:
         reg["placeholders"] = mapping
         reg["source_masked"] = masked
 
+        warnings = []
+        m_adj = PH_DIGIT_ADJ.search(masked)
+        if m_adj:
+            warnings.append(
+                f"Chuỗi {m_adj.group(0)!r}: chữ số dính chữ ngay cạnh placeholder. Bản gốc "
+                "nhiều khả năng đặt sai dấu cách giữa một số đo — đọc ngữ cảnh, đối chiếu "
+                "tài liệu cùng bộ nếu có, và giữ ĐỦ chữ số trong bản dịch.")
+            issues.append(make_issue(
+                "PH_DIGIT_ADJACENT", "P2", STAGE,
+                f"chữ số dính placeholder: {m_adj.group(0)!r} — nguồn có thể đặt sai dấu "
+                "cách trong một số đo",
+                page=reg["page"], region_id=reg["region_id"]))
+
         # context per spec §6.6
         idx = reg["reading_index"]
         same_page = [r for r in regions if r["page"] == reg["page"]]
@@ -146,6 +179,20 @@ def prep(job: Job) -> None:
         cont_prev = by_id.get(reg.get("continuation_prev", ""), {}).get("source_text", "")
         cont_next = by_id.get(reg.get("continuation_next", ""), {}).get("source_text", "")
 
+        # Chuỗi từ context_graph: cho model thấy TRỌN câu/cụm mà region này là một mảnh.
+        # Đây là thứ chữa gốc RC-A (câu bị xé theo dòng PDF) ở phía prompt — mỗi region vẫn
+        # trả một target riêng để layout không đổi, nhưng model biết mình đang dịch mảnh nào
+        # của cái gì nên đảo vế và chọn từ đúng ngữ cảnh.
+        chain_src, chain_pos, chain_kind = "", "", ""
+        cid = reg.get("chain_id")
+        if cid and cid in chain_by_id:
+            ch = chain_by_id[cid]
+            chain_src = ch["source_joined"][:600]
+            chain_pos = f"{ch['region_ids'].index(reg['region_id']) + 1}/{len(ch['region_ids'])}"
+            chain_kind = ch["kind"]
+        co_fig = [by_id[o]["source_text"][:60] for o in co_figure_of.get(reg["region_id"], [])
+                  if o in by_id][:4]
+
         size = reg["runs"][0]["size"] if reg["runs"] else 10.0
         cw = reg["container"][2] - reg["container"][0]
         ch = reg["container"][3] - reg["container"][1]
@@ -154,15 +201,22 @@ def prep(job: Job) -> None:
             "region_id": reg["region_id"], "page": reg["page"],
             "region_type": reg["region_type"],
             "source_text": masked,
+            "source_warnings": warnings,
             "placeholders": sorted(mapping.keys()),
             "style_roles": sorted({r["role"] for r in reg["runs"]}),
             "context": {
-                "heading": last_heading.get(reg["page"], ""),
-                "prev": (prev_r or {}).get("source_text", "")[:80],
-                "next": (next_r or {}).get("source_text", "")[:80],
+                "heading": last_heading.get(reg["page"], "") or under_heading.get(reg["region_id"], ""),
+                # 80 ký tự cắt đúng giữa câu nên hàng xóm thường vô nghĩa; 240 đủ trọn câu
+                # cho hầu hết đoạn của tài liệu kỹ thuật.
+                "prev": (prev_r or {}).get("source_text", "")[-240:],
+                "next": (next_r or {}).get("source_text", "")[:240],
                 "table_headers": table_headers,
                 "continuation_prev": cont_prev[-120:] if cont_prev else "",
                 "continuation_next": cont_next[:120] if cont_next else "",
+                "chain_source": chain_src,
+                "chain_position": chain_pos,
+                "chain_kind": chain_kind,
+                "co_figure": co_fig,
             },
             "glossary_prefer": [
                 {"en": g["term"], "vi": g["target"]} for g in prefer
@@ -170,12 +224,18 @@ def prep(job: Job) -> None:
             "length_guidance": {
                 "container_w_pt": round(cw, 1), "container_h_pt": round(ch, 1),
                 "font_size": size, "max_lines": max_lines,
-                "note": "Tiếng Việt nên ngắn gọn; ưu tiên vừa container, không cần dịch sát từng chữ."},
+                # Note cũ ("ưu tiên vừa container, không cần dịch sát từng chữ") đẻ ra văn
+                # cụt kiểu điện tín và viết tắt tự chế — defect thật đã phải sửa tay.
+                "note": "Dịch đủ nghĩa, tự nhiên. Vượt khung thì bỏ từ đệm, KHÔNG bỏ thông "
+                        "tin; viết tắt chỉ dùng bộ đã duyệt trong glossary/domain context."},
         }
         append_jsonl(req_path, req)
         n_requests += 1
         if cur_page is not None and (reg["page"] != cur_page or len(cur_batch) >= max_batch):
-            if not reg.get("continuation_prev"):
+            # Không cắt batch giữa chuỗi: cross-page (như cũ) VÀ same-page chain của graph —
+            # cắt giữa chuỗi thì model mất đúng thứ chain_source vừa cho nó thấy.
+            mid_chain = bool(cid) and chain_pos and not chain_pos.startswith("1/")
+            if not reg.get("continuation_prev") and not mid_chain:
                 flush_batch()
         cur_page = reg["page"]
         cur_batch.append(reg["region_id"])
@@ -226,8 +286,25 @@ Quy tắc bắt buộc (validator sẽ reject nếu vi phạm):
 5. Tôn trọng `length_guidance`: bản dịch dài quá container sẽ bị shrink/review —
    ưu tiên gọn, giữ nghĩa kỹ thuật chính xác, không làm nhẹ cảnh báo an toàn.
 6. Số và đơn vị giữ định dạng nguồn (đã nằm trong placeholder MEAS/MODEL).
+6b. **`source_warnings`** (nếu không rỗng) là cảnh báo nguồn có thể HỎNG ở chỗ đó — thường
+   là dấu cách đặt sai làm vỡ một con số. ĐỌC nó trước khi dịch region đó, và đừng chép
+   máy móc con số đã bị vỡ. Ca thật: bản gốc in `is1 5V` cho `1.5V`, dịch máy móc ra "5V"
+   là sai một bậc 10 lần trong tài liệu kỹ thuật. Đối chiếu tài liệu cùng bộ nếu có.
+6c. **Địa chỉ bưu chính giữ NGUYÊN như nguồn** — chỉ dịch nhãn (`Factory Address` →
+   `Địa chỉ nhà máy`), không dịch thân địa chỉ. `No. 3492 Jinqian Road, Fengxian
+   District, Shanghai` phải ra y như vậy, KHÔNG thành `Số 3492 Đường Jinqian, Quận
+   Fengxian, Thượng Hải` — địa chỉ đã dịch thì không gửi thư tới được. Tên quốc gia đứng
+   cuối được dịch bình thường. Vi phạm → P1 `CONSISTENCY_ENTITY`.
 7. `\n` trong text của target run = explicit line break (xuống dòng cứng); dùng khi
    cần giữ cấu trúc dòng như label/value hoặc danh sách trong một cell.
+7b. **`context.chain_source`** (nếu có) là TRỌN câu/cụm mà region này chỉ là một mảnh —
+   PDF xé chữ theo dòng chứ nội dung không đứt ở đó. Đọc hết chuỗi, dịch cả cụm trong
+   đầu, rồi ghi phần thuộc về region đang xử lý (`chain_position` cho biết mảnh thứ mấy).
+   Được phép đảo vế cho tự nhiên miễn là ghép các mảnh lại vẫn đủ và đúng thứ tự.
+   `chain_kind: label_stack` = một nhãn chú thích nhiều dòng cạnh hình → dịch cả cụm theo
+   trật tự tiếng Việt rồi chia dòng, KHÔNG dịch từng dòng máy móc.
+   **Placeholder phải ở lại đúng region gốc của nó** — không chuyển ⟦TOKEN⟧ sang mảnh khác.
+   `context.co_figure` là các nhãn anh em cùng hình: đọc để không gán nhầm nghĩa của nhau.
 8. **MỌI bản dịch phải do model của session sinh ra, cho TỪNG request.** CẤM mọi
    logic dịch nằm trong code: dictionary/bảng tra cứu tự chế, find-replace, hay
    fallback copy-source. Script (nếu dùng) CHỈ được là phương tiện GHI các bản
@@ -250,8 +327,9 @@ def main() -> None:
     args = ap.parse_args()
     job = Job(args.job)
     try:
-        if job.status() not in ("PREFLIGHTED", "NEEDS_REVIEW"):
-            raise BlockingError(f"status {job.status()} — cần PREFLIGHTED (hoặc NEEDS_REVIEW re-prep)")
+        if job.status() not in RERUNNABLE_STATUSES:
+            raise BlockingError(f"status {job.status()} — cần một trong "
+                                f"{', '.join(RERUNNABLE_STATUSES)} (§11.5)")
         job.verify_fingerprint()
         with job.acquire_lock(STAGE):
             prep(job)

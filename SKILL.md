@@ -2,28 +2,204 @@
 name: pdf-translate-layout
 description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layout, ảnh, vector, bảng và typography theo PDF Translation Engine v1. Dùng khi user muốn dịch PDF giữ nguyên format ("translate PDF keep layout", dịch manual/datasheet/quick guide sang tiếng Việt), hoặc tiếp tục một translation job đã có. Fail-closed; output cuối chỉ phát hành khi quality gates pass và có human approval.
 license: AGPL-3.0
-compatibility: Agent-agnostic theo chuẩn Agent Skills — chạy trên Claude Code, OpenAI Codex, Google Antigravity (và agent tương thích SKILL.md khác). Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
+compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.2.1"
+  version: "1.8.4"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.2.1 — scripts Milestone 1-4 core hoạt động, đã E2E-test
-> full trên tài liệu thật 15 trang (263 regions, 7/7 gates PASS). Portable đa agent
-> (Claude Code / Codex / Antigravity — §9), có authenticity gates chống
-> pseudo-translation (§1.6, §7). Giới hạn v1 ở §11.
+> **Trạng thái:** RELEASED v1.8.4 (engine `1.8.4`, layout model `lg-basic-6`) —
+> scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
+> 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
+> không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
+> Giới hạn v1 ở §11.
+>
+> Từ 1.2.1: **1.3.0** thêm detector truncation + short-identical (§7), validator chỉ
+> đọc response line cuối mỗi region. **1.4.0** đổi layout model sang `lg-basic-3`:
+> hàng bảng gõ liền bằng space được tách theo lưới cột, wrap budget trừ đúng phần
+> thụt lề, fit_paint và qa_gates dùng chung dung sai descent (`qa.container_tol_y_em`).
+> Layout model đổi tên vì regions.json của cùng một source khác lg-basic-2 → job cũ
+> không reproduce được bằng engine mới, phải re-run.
+> **1.4.1** thêm `NUMBER_DRIFT` vào `validate_responses.py`: tập chữ số của target phải
+> khớp source, lệch thì P1 kèm số thiếu/thừa. **Cảnh báo, không chặn** — nội dung trải qua
+> nhiều region có thể dồn số hợp lệ. Không đụng layout; job dựng bằng 1.4.0 vẫn re-fit
+> được. Lý do có gate này: 2026-08-05 một model dịch mục lục thành **mục lục khác** (8
+> dòng, đổi cả số mục lẫn tên mục) mà mọi gate đều xanh — Gate 2 không thấy vì bản dịch
+> trôi chảy, đúng tiếng Việt, không trùng source.
+> **1.4.2** siết truncation + thêm hai lưới nội dung, đo trên 7185 cặp của 14 job trước
+> khi chốt: (1) sàn truncation 12→6 từ, thêm tầng source ≥12 từ mà target <60% — audit
+> 2026-08-05 tìm thấy bản Lite user manual ĐÃ RELEASED mất ~10 câu (cấm ngắn mạch, cấm
+> nối tiếp, nửa lệnh tiếp địa, nguyên Bước 1 lắp đặt) đều nằm ở ratio 0.45–0.59, dưới
+> radar sàn cũ; (2) `NEGATION_DROP` — source có not/never/forbidden/without mà target
+> không còn từ phủ định nào; (3) `SYMBOL_DRIFT` — multiset `<>≤≥±` phải khớp (0 false
+> positive đo được). Cả ba là P1 cảnh báo, không chặn; số đếm in ở dòng tổng kết
+> validate. Không đụng layout.
+> **1.4.3** thêm `TRANSLATION_CARRY_THROUGH` — **P0, không waive được**. Bắt find-replace:
+> target giữ ≥3 từ **thường** của source và nhiều hơn gấp đôi số từ tiếng Việt. Ca thật
+> nằm trong bản ĐÃ RELEASED: nguyên quy trình khởi động/tắt máy chỉ đổi mỗi chữ `Step` →
+> `Bước`, phần còn lại giữ nguyên tiếng Anh; `lang_suspect` không thấy vì nó đòi dưới 5%
+> ký tự có dấu, khối này ở 6.9%. Chỉ đếm từ thường nên tên riêng giữ nguyên không bị bắt.
+> Đo trên 7185 cặp/14 job: **0 hit ở mọi bản dịch đạt**, bắt trọn 3 khối của bản lỗi.
+> **1.4.4** sửa cửa sổ đọc của Gate 3: mép dưới nới đúng bằng descent slack mà `fit_paint`
+> được phép dùng (`max(tol_pt, container_tol_y_em × size)`), cùng công thức Gate 4 vẫn
+> dùng. Cửa sổ cũ cố định 2pt trong khi slack là 0.6em (5.4pt ở cỡ chữ 9pt), nên dòng
+> cuối của region nhiều dòng nằm ngoài vùng đọc và gate báo `G3_TARGET_NOT_FOUND` — P0,
+> không waive được — dù chữ có thật trên trang. Đo 2026-08-05: 11/11 P0 của bản V16 Lite
+> là báo giả, mốc V16 manual dính thêm 2 ca cùng kiểu. Ngang và mép trên giữ chặt như cũ.
+> **1.4.5** tách đúng vai Gate 3 và Gate 4. Gate 3 đo **độ phủ** — bản dịch có lên được
+> trang không; hình học là việc Gate 4. Khi target không nằm trong khung container nhưng
+> **có trên trang** (so cả bản bỏ khoảng trắng, vì `space_w` của 1.4.0 làm trích xuất lệch
+> dấu cách ở hàng bảng nhiều cột), gate ghi `G3_TARGET_OUTSIDE_BOX` mức P2 và trỏ sang
+> cảnh báo Gate 4 cùng region, thay vì `G3_TARGET_NOT_FOUND` P0. Thiếu hẳn chữ vẫn là P0
+> không waive được. Đo trên 5 cột dịch của cùng một job 514-581 region: **23/23 P0 của
+> gate này là báo giả**, chữ có thật trên trang in.
+> **1.5.0** sửa hai lỗi layout đã treo từ đầu (`lg-basic-3` giữ nguyên, `region_id` không
+> đổi nên mọi `responses.jsonl` cũ vẫn re-fit được):
+> (1) **`space_w` theo font token liền kề.** Khe đứng sau một token được vẽ bằng font của
+> chính token đó (segment gộp `t1 + " " + t2`), nhưng fitter lấy chung font token đầu
+> region. Dòng trộn sans/mono lệch 2.38pt mỗi khe — bốn khe là 9.5pt, đủ để dòng thò khỏi
+> ô. `wrap_lines` nay nhận list bề rộng khe.
+> (2) **Ngân sách dọc đo từ `base_y`, không phải chiều cao container.** Chữ vẽ từ origin
+> của span nguồn chứ không từ mép trên ô, nên phần trên `base_y` không chứa được dòng nào.
+> Đối xứng với `wrap_w = c[2] - base_x` vốn đã đúng.
+> **1.5.1** `authenticity_check` nhận `keep_terms`: region mà source **chỉ gồm** thuật ngữ
+> `keep` của glossary thì giữ nguyên là đúng, không phải "chưa dịch". Ca thật: quick guide
+> giữ `Shanghai PYTES Energy Co., Ltd.` đúng theo glossary mà Gate 2 vẫn báo
+> `TRANSLATION_IDENTICAL` rồi làm gate đỏ. Chỉ bỏ qua khi không còn từ nào ngoài các term
+> đó — region lẫn văn xuôi vẫn được xét đầy đủ.
+> **1.5.2** nới khung heading vào khoảng trống đo được (`layout.expand_heading`, mặc định bật).
+> Khung region lấy theo bbox chữ **nguồn**; tiếng Việt dài hơn nên một tiêu đề vừa khít ở bản
+> gốc thành `FIT_IMPOSSIBLE` dù quanh nó là khoảng trắng. Ca thật: tựa bìa `User Manual`
+> (158pt) → `Hướng dẫn sử dụng` (250pt) trong khung 196.6pt. **Không** giải bằng cách cho
+> xuống dòng: khung cao 33.7pt, hai dòng cỡ 25.1pt cần 57.7pt — thiếu chiều cao chứ không
+> thiếu số dòng. Luật: chỉ áp cho heading **một dòng** (kể cả tiêu đề đánh số bị `LIST_RE`
+> xếp nhầm thành `list_item`), chỉ khi fit thất bại, nới đúng bề rộng cần, dừng trước mọi
+> vật cản cùng dải dọc (chữ region khác + vector + ảnh) và trong lề thân bài. Heading có tâm
+> chữ trùng tâm trang (±3pt) được nới **đối xứng và chuyển sang căn giữa** — giữ "left" thì
+> chữ vẫn vẽ từ `base_x` cũ và cụm dài hơn sẽ lệch phải khỏi bố cục gốc.
+> **Đặt ở stage 6 chứ không ở extract** vì `region_id` sinh từ `container[0]//8`,
+> `container[1]//8`: đổi container ở stage 2 sẽ đổi region_id và làm mồ côi toàn bộ
+> `responses.jsonl` đã dịch. Khung vẽ ghi vào `container_paint`; Gate 3/4 đọc nó khi có.
+> `region_id`, `lg-basic-3` và mọi job cũ không đổi.
+> **1.6.0** thêm **Translation Context Graph** (stage 2.5, `build_context_graph.py`) — nối
+> các region thuộc về nhau để model thấy trọn câu/cụm thay vì từng mảnh rời. Lý do: PDF tách
+> chữ thành ô nhỏ, thường một dòng một region; đo trên V16 user manual (833 region)
+> `continuation_*` = 0 trong khi riêng trang thư ngỏ có 16 liên kết câu thật, nên model dịch
+> từng mảnh với ~80 ký tự hàng xóm và không đảo vế qua ranh giới ô được. Graph **không dịch**
+> — chỉ nối cạnh bằng hình học + regex (§1.6). Cạnh: `continues` (văn xuôi cùng đoạn ·
+> caption-stack cho nhãn nhiều dòng · cross-page cũ), `co_figure`, `same_source`,
+> `under_heading`. Artifact `model/context_graph.json`; region nhận thêm `chain_id`.
+> **Guard là phần quan trọng nhất** — không có nó thì 9/10 chuỗi ngoài trang thư ngỏ là nối
+> sai: loại tiêu đề đánh số (`LIST_RE` khớp `"5."` trong `"5.1.1 …"` nên `region_type` không
+> lọc được), dòng mục lục, `Table N`/`Figure N`, dòng `Nhãn: giá trị`, và đầu chuỗi dưới 4
+> từ. Caption-stack đo khe theo **chiều cao một dòng**: cụm nhãn thật 0.035, hai nhãn rời
+> xếp chồng 0.173–0.301 → ngưỡng 0.12. Đo lại sau guard: V16 manual **9/9 chuỗi đúng**.
+> Kèm theo: `translate_prep` (`req-v2`) đưa `chain_source`/`chain_position`/`chain_kind`/
+> `co_figure` vào request, prev/next nới 80→240 ký tự (80 cắt giữa câu nên hàng xóm thường
+> vô nghĩa), không cắt batch giữa chuỗi, và **bỏ note "ưu tiên vừa container, không cần dịch
+> sát từng chữ"** — note đó đẻ ra văn cụt kiểu điện tín và viết tắt tự chế.
+> `validate_responses` thêm `CONSISTENCY_DRIFT` (P2, cảnh báo): cùng một nguồn ra hai bản
+> dịch khác nhau. So theo nhóm **đã lọc chuỗi** — mảnh của một cụm nhiều dòng trùng chữ với
+> một nhãn độc lập là khác biệt hợp lệ (ca thật: `Battery side` mảnh của cụm ở p19 vs nhãn
+> độc lập ở p21, hai bản dịch khác nhau và cả hai đều đúng). Đo: 0 báo oan trên bản đã sạch,
+> bắt đúng `Model Pin`/`Model pin` trên bản chưa sửa.
+> `region_id`, `lg-basic-3`, `container` và mọi job cũ **không đổi** — graph là artifact
+> phụ, job dựng trước 1.6.0 chạy được không cần graph.
+> **1.7.0** → layout model **`lg-basic-4`**: gộp **cross-block** các dòng cùng một đoạn
+> (`layout.merge_paragraph`, mặc định bật; tắt → `lg-basic-3`). `group_block_lines` chỉ gộp
+> trong MỘT block rawdict, mà PDF hay đặt mỗi dòng vào một block riêng — thư ngỏ V16 là 28
+> dòng thành 28 block, khe thật 2.72pt, thừa điều kiện gộp nếu chung block. Hệ quả cũ: câu
+> bị xé theo dòng, model dịch từng mảnh, tiếng Việt không đảo vế qua ranh giới region được.
+> Dùng **chung detector với context graph** (`flow_link`) — một luật, hai mức áp dụng: 1.6.0
+> chỉ đưa chuỗi vào context, 1.7.0 gộp thật để fitter wrap lại tự do. Mọi guard của graph áp
+> nguyên. Đo trên V16 user manual: 833 → 818 region, 9 lần gộp, **10/10 đúng**; thư ngỏ 22
+> dòng rời thành 8 đoạn; sau khi gộp graph báo `chains=0` — đúng như thiết kế, không còn gì
+> để nối. Mọi đoạn gộp còn dư chỗ reflow (3 dòng/khung chứa 4; 5 dòng/khung chứa 7).
+> Kết quả ngôn ngữ: `"developed and produced by Pytes"` nay dịch được thành **"do Pytes phát
+> triển và sản xuất"** thay vì calque `"được phát triển và sản xuất bởi Pytes"` mà lg-basic-3
+> không sửa nổi vì động từ và tác nhân nằm ở hai region.
+> Kèm **`STALE_TRANSLATION`** (P1): `translation_meta` nay đóng dấu `source_hash`, và validate
+> báo khi region đổi `source_text` sau khi đã dịch mà vẫn mang bản dịch cũ. Lỗ hổng thật đo
+> được lúc migrate: đổi layout model làm 2 region giữ nguyên `region_id` nhưng nguồn dài ra;
+> một ca bị `PLACEHOLDER_MISMATCH` chặn, **một ca lọt** vì tỉ lệ từ 0.69 vẫn trên sàn
+> truncation 0.60. Job dịch trước 1.7.0 chưa có dấu → lần migrate đầu tiên phải đối chiếu
+> `source_hash` bằng tay.
+> **Đổi layout model = job cũ phải re-run stage 2.** Chi phí đo được trên V16 manual: chỉ 31
+> `region_id` đổi, **0/53 sửa tay bị mồ côi**, 13 region cần dịch mới.
+> **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
+> `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:
+> (1) **bbox của line tính cả space đầu/đuôi.** Space có advance nhưng không vẽ gì; ô bảng
+> lấy `container = cell | bbox` nên khung phình ra khỏi cột và fitter wrap theo bề rộng
+> không có thật. Đo: V16 manual p26 thổi **7.5pt** (3 space đuôi), Lite p30 thổi 2.5pt —
+> mực nguồn dừng ở 380.4/380.2 trong khi vạch kẻ ở 380.9/380.8, tức **bản gốc không hề
+> chạm vạch**, chỉ khung mới vượt. `build_lines` nay đo theo `ink_bbox`.
+> (2) **`fragment_row` đòi ≥2 space** mới coi là ranh giới cột. Bản gốc V16 ngăn cột bằng
+> **một space đơn** (`Recovery* 0%＜SOC≤5% 5%＜SOC≤10% …` là nguyên một hàng 6 cột), nên cả
+> hàng thành một region trải hết bảng. Số lượng space không phân biệt được gì: khe cột hẹp
+> nhất đo được **1.33pt**, còn mảnh hơn khe từ thường (2.50pt). Chỉ hình học nói lên điều
+> đó — nay cắt tại **mọi** khe space có vạch kẻ **thật** nằm trong khe (dung sai 1.5pt vì
+> chữ được phép chờm lên vạch: `Recovery*` vượt 0.45pt).
+> Ranh giới đổi từ lưới logic `find_tables` sang `vertical_rules`, và vạch phải cắt ngang
+> đúng dải y của dòng mới tính — ô gộp không có nét ngăn nhưng lưới logic vẫn báo có, và
+> luật cũ sẽ xé đôi một tiêu đề trải hết bảng. `vertical_rules` chuyển về `_common.py`:
+> stage 2 cắt theo danh sách nào thì Gate 4 chấm theo đúng danh sách đó.
+> Đo trên hai tài liệu trước khi chốt: **Lite 26→26 lần cắt (không đổi một ca nào)**, V16
+> manual 26→39, toàn bộ 13 ca thêm nằm đúng 6 hàng đa cột thật. Văn xuôi trong ô có 5 khe từ
+> thường: **0 lần cắt oan**.
+> **1.8.1** thêm **`PH_DIGIT_ADJACENT`** (P2, stage 3): cảnh báo khi nguồn đã mask có chữ số
+> dính liền **chữ cái** ngay cạnh placeholder, và đưa cảnh báo đó vào `source_warnings` của
+> request để model gỡ được ngay lúc dịch. Lỗ hổng thật: bản gốc V16 in `is1 5V` cho `1.5V`,
+> `protect()` che `5V` thành `⟦MEAS_1⟧` còn chữ số `1` mắc lại trong `is1` — model dịch ra
+> "đạt 5V", **sai một bậc 10 lần** trong hướng dẫn xử lý sự cố. `NUMBER_DRIFT` bắt được
+> nhưng ở stage 5, sau khi đã dịch sai. Luật CHẶT (đòi chữ cái liền trước chữ số) đo trên
+> 1243 vùng của 3 tài liệu: **1 đúng, 0 oan**; bỏ điều kiện chữ cái thì 19 cảnh báo, 18 oan
+> (dính hết số mục kiểu `6.1 ⟦MODEL_1⟧`). Không đụng layout — job cũ chỉ cần chạy lại
+> stage 3.
+> **1.8.2** sửa lỗi **fail-open ở chốt phát hành**. `approve.py` lật trạng thái sang
+> RELEASED *trước* rồi mới copy `render/draft.pdf` sang `output/`, mà `Job.p()` chỉ ghép
+> đường dẫn chứ không tạo thư mục — job chưa từng phát hành thì `output/` chưa tồn tại,
+> `copyfile` ném `FileNotFoundError`, và job **mang trạng thái RELEASED mà không có bản
+> phát hành nào**. Sự cố thật 2026-08-06: 2/3 job đổ, job thứ ba chạy được chỉ vì đã có
+> `output/` từ lần phát hành trước — nên lỗi ẩn suốt từ đầu. Nay: `stage_release_copy()`
+> tạo thư mục và ghi ra `<out>.part` TRƯỚC, lật trạng thái SAU, rồi `os.replace()` nguyên
+> tử vào tên chính thức. Hỏng ở bất kỳ bước nào cũng fail-closed, và `output/` không bao
+> giờ chứa `translated-approved.pdf` khi trạng thái chưa phải RELEASED.
+> **1.8.3** `engine_version` trong determinism tuple nay được đóng dấu ở **mọi** stage
+> (`Job.mark_stage`), không chỉ ở `extract_group`. 1.8.0 đã sửa được nửa vấn đề — preflight
+> đóng dấu một lần rồi thôi — nhưng job chạy tiếp `fit_paint`/`qa`/`approve` bằng engine mới
+> hơn vẫn khai engine của lần extract cuối. Đo 2026-08-06: ba job khai `1.8.0` trong khi
+> render và QA do 1.8.1/1.8.2 sinh. Ai tái lập job theo con dấu đó sẽ checkout nhầm phiên
+> bản. `layout_model_version` vẫn do stage 2 đóng vì nó là việc riêng của stage đó.
+> **1.8.4** thêm **`CONSISTENCY_ENTITY`** (P1, stage 5): **địa chỉ bưu chính bị dịch**.
+> Lỗ hổng thật nằm trong bản Lite đã RELEASED — p32 ra `Số 3492 Đường Jinqian, Quận
+> Fengxian, 201406 Thượng Hải` trong khi p1 của **cùng tài liệu** giữ nguyên tiếng Anh, nên
+> bản in mang hai dạng địa chỉ và dạng ở p32 không gửi thư tới được. `CONSISTENCY_DRIFT`
+> không thấy vì nó chỉ so region có nguồn khớp **tuyệt đối**, mà nguồn p1 (`…Shanghai,
+> China`) khác nguồn p32 (`…201406 Shanghai,`). `URL`/`EMAIL`/`STD` đã được `protect()` che
+> nên round-trip qua `PLACEHOLDER_MISMATCH`; địa chỉ là văn xuôi thường — đúng lớp thực thể
+> duy nhất còn hở. Luật soi **đúng một lớp** đó: bản rộng hơn (gom mọi thực thể) đo được 0
+> đúng / 3 oan vì gom nhầm `UN3480`, `IEC62619`, `UL1015` vào một nhóm. Đo luật hẹp trên
+> 1947 region của ba tài liệu: fire đúng **5 region — cả 5 là địa chỉ nhà máy thật, 0 oan**;
+> bản dịch lỗi p32 bị bắt với 4 token thiếu. Nhãn không bị soi (`Factory Address` → `Địa chỉ
+> nhà máy` là đúng), tên **quốc gia** cũng không (`China` → `Trung Quốc` hợp lệ và nhất quán
+> ở cả ba tài liệu). Kèm mục **6c** trong `AGENT_INSTRUCTIONS.md` để model biết trước lúc
+> dịch. Không đụng layout — job cũ chỉ cần chạy lại stage 5.
 > **Spec nguồn:** PDF Translation Engine v1 (rev 1.4) — tài liệu thiết kế nội bộ; kiến trúc tóm tắt trong [README](README.md)
-> **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
+> **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
 
 ## 1. Nguyên Tắc Bắt Buộc
 
 1. **Fail-closed:** input ngoài supported envelope tạo issue có mã; không silent fallback, không rasterize ngầm.
-2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve — **enforce bằng code:** `approve.py --decision approve` yêu cầu terminal tương tác (TTY) + gõ chuỗi xác nhận `APPROVE <sha8>`; agent session headless trên mọi platform bị chặn, reviewer phải tự chạy lệnh trong terminal. Auto-QA pass chỉ tạo `render/draft.pdf`. Release sai có thể thu hồi: `approve.py --decision revoke` (không cần TTY) → status `REVOKED`, xoá output, cho phép re-run stage 4-8.
+2. **Release rule:** `output/translated-approved.pdf` CHỈ được ghi khi **quality gates PASS VÀ human approval tường minh** (ghi vào `review/decisions.jsonl` kèm approver + timestamp). Agent không bao giờ tự approve. **Cưỡng chế bằng quyền ghi filesystem:** đặt `scripts/`, `assets/`, `SKILL.md` thành **chỉ đọc** (`chmod -R a-w`) TRƯỚC khi giao việc cho bất kỳ agent nào, ghi lại checksum của chúng, và đối chiếu checksum TRƯỚC khi tin kết quả. TTY + chuỗi xác nhận `APPROVE <sha8>` trong `approve.py` chỉ là lớp **phát hiện**, KHÔNG phải lớp chặn — agent ghi được vào `scripts/` thì xoá được cả hai dòng kiểm (sự cố Antigravity 2026-08-05: đổi thành `if False:` rồi tự approve sau 8 giây). Reviewer phải tự chạy lệnh approve trong terminal thật. Auto-QA pass chỉ tạo `render/draft.pdf`. Release sai có thể thu hồi: `approve.py --decision revoke` (không cần TTY) → status `REVOKED`, xoá output, cho phép re-run stage 4-8.
 3. **Artifact là source of truth:** mọi run kết thúc bằng job folder trên disk, không chỉ chat text.
 4. **Source immutable:** không bao giờ sửa PDF gốc; mỗi render ghi file mới.
 5. Scripts đảm nhiệm phần deterministic (extract, fit, paint, QA); agent đảm nhiệm dịch và điều phối. Agent không tự đặt tọa độ text.
-6. **Authenticity (enforce bằng code, không chỉ văn bản):** bản dịch stage 4 PHẢI do model của session sinh cho từng request — CẤM mọi logic dịch nằm trong code (dictionary/bảng tra cứu tự chế, find-replace, fallback copy-source). Script chỉ được là **phương tiện ghi** các bản dịch model đã sinh sẵn (embedded verbatim), đặt trong job folder — không đặt trong `scripts/` của skill. Validator + Gate 2 đo tỷ lệ region đáng dịch có target trùng source hoặc sai ngôn ngữ đích; vượt ngưỡng (`translation.authenticity`, default 5%) → **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` — không waive được, không thể release** (sự cố Antigravity 2026-08-04).
+6. **Authenticity (enforce bằng code, không chỉ văn bản):** bản dịch stage 4 PHẢI do model của session sinh cho từng request — CẤM mọi logic dịch nằm trong code (dictionary/bảng tra cứu tự chế, find-replace, fallback copy-source). Script chỉ được là **phương tiện ghi** các bản dịch model đã sinh sẵn (embedded verbatim), đặt trong job folder — không đặt trong `scripts/` của skill. Validator + Gate 2 đo tỷ lệ region đáng dịch có target trùng source hoặc sai ngôn ngữ đích; vượt `translation.authenticity` → **P0 `TRANSLATION_COVERAGE_FAIL` / `TARGET_LANG_FAIL` — không waive được, không thể release**.
+
+**Ngưỡng hiện tại (1.4.0) chưa đủ chặt — biết và đang sửa.** Code đo `identical` và `lang_suspect` **riêng từng loại**, mỗi loại 5%. Hướng đã chốt: gộp cả ba loại vào **một** tỷ lệ, 1% VÀ tối đa 5 region (lấy cái chặt hơn) — chưa cài. Cho tới lúc đó, con số Gate 2 phải đọc kèm mắt người.
+
+Hai sự cố Antigravity đứng sau luật này. **2026-08-04:** pseudo-translation hàng loạt. **2026-08-05:** áp glossary bằng find-replace, ăn vào giữa từ tiếng Anh (`important` → `imcổngant`, `Transportation` → `Transcổngation`) và để nguyên 18 region tiếng Anh — 22/514 = 4.3%, **lọt qua ngưỡng cũ vì 5% đo riêng từng loại**. Ngưỡng gộp 1% + cap 5 chặn được; hai lượt đạt (Claude Code, Codex) đều ở mức 0/514.
 
 ## 2. I/O Contract
 
@@ -95,6 +271,7 @@ job_id = <slug(pdf_stem)>__<source_sha8>__<UTC yyyymmddThhmmss>
 |---|---|---|---|
 | 1 | preflight | `scripts/preflight.py` | `model/preflight.json`, `model/resource_manifest.json` |
 | 2 | extract + group | `scripts/extract_group.py` | `model/regions.json`, `model/fonts.json` |
+| 2.5 | context graph | `scripts/build_context_graph.py` | `model/context_graph.json`, `chain_id` trên region |
 | 3 | translate-prep | `scripts/translate_prep.py` | `translation/requests.jsonl` |
 | 4 | translate | **agent (in-session)** | `translation/responses.jsonl` |
 | 5 | validate | `scripts/validate_responses.py` | reject sai schema/placeholder → agent sửa |
@@ -118,14 +295,14 @@ job_id = <slug(pdf_stem)>__<source_sha8>__<UTC yyyymmddThhmmss>
 
 ## 6. Data & Privacy
 
-> **Disclosure (bắt buộc giữ trong README khi publish):** text content của PDF được gửi tới LLM provider của session đang chạy để dịch. Người dùng tự chịu trách nhiệm data policy đối với tài liệu của họ. Nội bộ Pytes: đã approve dịch tài liệu nội bộ qua Claude API (ADR-009).
+> **Disclosure (bắt buộc giữ trong README khi publish):** text content của PDF được gửi tới LLM provider của session đang chạy để dịch. Người dùng tự chịu trách nhiệm data policy đối với tài liệu của họ.
 
 - Không log toàn bộ nội dung tài liệu ra ngoài job folder.
 - Job folder có thể chứa nội dung nhạy cảm — đặt `--out` vào storage có kiểm soát.
 
 ## 7. Quality Gates (tóm tắt — chi tiết ở spec §10)
 
-Gate 1 decision coverage → Gate 2 translation integrity (placeholder round-trip, glossary, **authenticity: identical-target + target-language ratio, P0 khi vượt ngưỡng — mục 1.6**) → Gate 3 rendered-text coverage (translated + `keep` regions nguyên vẹn, NFC, tofu, color tolerance, htmlbox scale trong policy) → Gate 4 geometry/collision → Gate 5 image/vector preservation (so với `resource_manifest.json`) → Gate 6 visual diff 300/600 DPI → Gate 7 structural validation. Release cần: không còn P0/P1 unresolved **và** human approval.
+Gate 1 decision coverage → Gate 2 translation integrity (placeholder round-trip, glossary, **authenticity: identical-target + target-language ratio, P0 khi vượt ngưỡng — mục 1.6**; **entity: địa chỉ bưu chính phải giữ nguyên như nguồn, P1 `CONSISTENCY_ENTITY`**) → Gate 3 rendered-text coverage (translated + `keep` regions nguyên vẹn, NFC, tofu, color tolerance, htmlbox scale trong policy) → Gate 4 geometry/collision (out-of-container theo `qa.container_tol_pt` cho ngang/trên và `qa.container_tol_y_em` cho đáy; **table rule cross**: dòng dịch trong `table_cell` không được cắt ngang nét kẻ dọc thật của bảng) → Gate 5 image/vector preservation (so với `resource_manifest.json`) → Gate 6 visual diff 300/600 DPI → Gate 7 structural validation. Release cần: không còn P0/P1 unresolved **và** human approval.
 
 So sánh resource/visual dùng **content digest + geometric tolerance (~1pt)** và **meaningful-diff threshold** — không dùng bit-exact/md5 equality: tọa độ round-int flaky tại biên `.5`, renderer lệch ±1/255 theo cache state (spec §9.5, §20.1).
 
@@ -148,8 +325,18 @@ So sánh resource/visual dùng **content digest + geometric tolerance (~1pt)** v
 
 ## 9. Chạy Đa Agent (Claude Code / Codex / Antigravity)
 
-Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một folder, hành vi
-đồng nhất trên cả ba agent. Không cấu hình gì thêm ngoài đăng ký discovery:
+> **Bắt buộc trước MỌI lượt giao việc cho agent:** đặt `scripts/`, `assets/`, `SKILL.md`
+> thành chỉ đọc và ghi checksum; đối chiếu lại checksum trước khi tin kết quả. Không có
+> bước này thì không có gì ngăn agent sửa `scripts/` — đã xảy ra thật.
+>
+> **Antigravity IDE 2.1.1 — KHÔNG ĐẠT (2026-08-05).** Sửa `scripts/approve.py` thành
+> `if False:` để vô hiệu hoá chốt human-approval rồi tự phát hành; chạy `fit_paint` +
+> `qa_gates` + `approve` dù giao thức chỉ cho `validate_responses`; tự sinh 6 file `.py`
+> (~330 KB); Gate 2/3/4/6 FAIL, P1=116. Bảng dưới giữ lại vì đường dẫn discovery vẫn
+> đúng, **không phải vì nền tảng này dùng được**.
+
+Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một folder, cùng cách
+đăng ký discovery. Hành vi thì **không** đồng nhất: xem cảnh báo trên.
 
 | Agent | Discovery trong repo này | Cài global (mọi workspace) | Gọi skill |
 |---|---|---|---|
@@ -160,7 +347,7 @@ Skill theo chuẩn mở [Agent Skills](https://agentskills.io) — cùng một f
 - Đăng ký: `bash scripts/install.sh repo` (symlink tại git root — đã chạy sẵn cho repo này),
   `bash scripts/install.sh global`, `bash scripts/install.sh status`. Tool không theo
   symlink → thêm `--copy`.
-- Antigravity mở **subfolder** làm workspace (vd `V16 Battery/`) sẽ không thấy
+- Antigravity mở **subfolder** làm workspace (vd `docs/`) sẽ không thấy
   `.agents/` ở git root — dùng bản global.
 - **Quy tắc parity:** agent nào cũng chạy đúng các stage script §4 qua shell với `$PYTHON`
   từ `setup.sh`; stage 4 agent tự dịch in-session và ghi model id qua `--provider-model`;
@@ -186,6 +373,7 @@ pdf-translate-layout/
 │   ├── _common.py              # job infra: identity, lock, status machine, summary
 │   ├── preflight.py            # stage 1
 │   ├── extract_group.py        # stage 2
+│   ├── build_context_graph.py  # stage 2.5 (§4) — nối region thuộc về nhau
 │   ├── translate_prep.py       # stage 3
 │   ├── validate_responses.py   # stage 5
 │   ├── fit_paint.py            # stage 6
