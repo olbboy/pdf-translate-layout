@@ -357,11 +357,22 @@ def run_gates(job: Job) -> None:
             g5_fail += 1
             gi("G5_IMAGE_CHANGED", "P0", f"{missing_fatal} ảnh mất/đổi vị trí", page=pno)
         want_dc = resource["pages"][pno]["draw_clusters"]
+        # Gạch ô trống điền tay bị fit_paint xoá CÓ CHỦ Ý (bản dịch đặt lại bằng dãy '____'
+        # để ô trống chảy theo chữ). Bỏ đúng những cụm đó khỏi mốc kỳ vọng, không nới lỏng
+        # phép so: cụm nào không khớp một rect đã xoá thì vẫn phải còn nguyên.
+        removed = [b["rect"] for b in (manifest.get("blank_rules_removed") or [])
+                   if b["page"] == pno]
+        if removed:
+            want_dc = [c for c in want_dc
+                       if not any(abs(c[0] - r[0]) <= 1.5 and abs(c[2] - r[2]) <= 1.5
+                                  and abs(c[1] - r[1]) <= 1.5 for r in removed)]
         have_dc = merge_rects([d["rect"] for d in draft[pno].get_drawings()])
         if len(want_dc) != len(have_dc):
             g5_fail += 1
             gi("G5_VECTOR_CLUSTERS", "P1",
-               f"draw clusters {len(want_dc)} → {len(have_dc)}", page=pno)
+               f"draw clusters {len(want_dc)} → {len(have_dc)}"
+               + (f" (đã trừ {len(removed)} gạch ô trống xoá có chủ ý)" if removed else ""),
+               page=pno)
         want_links = {(l.get("kind"), str(l.get("uri", l.get("page"))))
                       for l in resource["pages"][pno]["links"]}
         have_links = {(l.get("kind"), str(l.get("uri", l.get("page"))))

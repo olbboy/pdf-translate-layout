@@ -4,6 +4,152 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.4] - 2026-08-07
+
+### Changed
+
+- `assets/default_glossary.csv` no longer ships one customer's brand and product
+  names (`Pytes`, `V16 Lite`, `V16`); 47 → 44 entries. They belong in that
+  customer's own profile, not in the default glossary of a general-purpose PDF
+  translation engine — all three were verified present in the customer profile
+  first, so nothing is lost. The file is only a fallback for jobs that pass no
+  `--glossary`, but its SHA-256 enters the determinism tuple, which is why this
+  needs a version bump rather than a silent edit.
+- Removed two references pointing into a private document repository (the design
+  spec and a plan file); both were dead links once the engine stands alone.
+
+### Fixed
+
+- **A false claim in §1.6.** The text said the authenticity thresholds "were
+  settled into a single combined ratio in 1.5.0". Reading the code says
+  otherwise: `qa_gates.py` still measures `identical` and `lang_suspect`
+  **separately, 5% each, joined by `or`**. That decision was never implemented
+  and the gap is still open as of 1.9.4. The document now states what the code
+  actually does.
+- Status line at the top of SKILL.md still read `v1.9.2`.
+
+## [1.9.3] - 2026-08-06
+
+### Changed
+
+- The engine now lives in its own repository. **No processing code changed.**
+  Three things had been anchored to its old location inside a product's document
+  folder: `lock-engine.sh` sat outside the skill with a hard-coded local path and
+  now lives in `scripts/` and locates itself; the integrity manifest hashed
+  **absolute** paths, so moving or cloning the engine broke it, and now hashes
+  paths relative to the skill root.
+
+### Fixed
+
+- **The manifest did not protect the shell scripts.** It hashed only
+  `.py`/`.yaml`/`.csv`, leaving `setup.sh` and `install.sh` editable by an agent
+  while `lock-engine.sh verify` still reported the engine intact — the exact hole
+  the guardrail exists to close. It now hashes `.sh` too: 13 → 16 files.
+
+### Added
+
+- `PDFTL_JOBS` environment variable, so `lock-engine.sh verify` can still scan a
+  job root for agent-generated `.py` files now that job folders live outside the
+  skill directory.
+
+## [1.9.2] - 2026-08-06
+
+### Fixed
+
+- The job directory tree now self-heals at **every** stage, not only at
+  preflight. `Job.p()` merely joins path strings, so any missing directory makes
+  the next write fail. `ensure_dirs()` and `SUBDIRS` were both already correct,
+  but `ensure_dirs()` ran exactly once at job creation — a guarantee that expires
+  for jobs built by an older engine with a shorter `SUBDIRS`, and for jobs moved
+  through git, zip or rsync, because **empty directories do not survive those**.
+  Two real failures share this root: a missing `output/` made approve's
+  `copyfile` raise `FileNotFoundError` (patched locally in 1.8.2, so the root
+  survived), and `qa_gates` writing PNGs into `qa/page_png/` failed the same way.
+  `ensure_dirs()` now runs in `_JobLock.__enter__`; every stage enters through
+  `acquire_lock`, so this is the one place that covers both current and future
+  stages. Verified by reproducing the failure — delete `qa/page_png`, `qa/diffs`
+  and `output` from a job copy, then run `qa_gates`: it completes, producing 15
+  PNGs and 6 diffs. Mutation test: drop the `ensure_dirs()` line and all 9
+  directories go missing, selftest red.
+
+## [1.9.1] - 2026-08-06
+
+### Fixed
+
+- `decisions.jsonl` is now written only when a decision has **actually taken
+  effect**. `approve.py` wrote the decision line on entry — before
+  `require_human_terminal` and before the P0/P1 gates. Real incident 2026-08-06:
+  a reviewer approved several jobs in a shell loop, where each job demands a
+  *different* challenge string `APPROVE <sha8>`; a mistyped string correctly
+  blocked the release (job stayed `NEEDS_REVIEW`, `output/` empty) but the log
+  still recorded an approval. One session produced **4 phantom lines across 4
+  jobs**. `decisions.jsonl` is append-only, so those lines cannot be deleted —
+  the audit record of "who approved what" was permanently wrong, failing at
+  exactly the thing it exists to protect. Each branch (`reject` / `revoke` /
+  `approve`) now calls `record()` after its own gate has passed; the approve
+  branch records **immediately before `set_status`**, not after, because the
+  release rule requires a released artifact to carry an approver — a `RELEASED`
+  job with no decision line is worse than the reverse. `revoke` on a job that was
+  never released no longer writes either. The ordering invariant lives in
+  `main()` and cannot be tested as a pure function, so the selftest inspects the
+  source directly (5 cases, anchored to indentation level).
+
+### Changed
+
+- SKILL.md §4 now forbids approving multiple jobs from a shell loop, and gives
+  the command to fetch each job's challenge string in advance.
+
+## [1.9.0] - 2026-08-06
+
+### Added
+
+- **`column_split` — a merged table cell is painted into its real columns.**
+  `fit_region` draws every line from the `base_x` of the region's first span, so
+  a table row that the PDF declares as ONE cell collapsed against the left margin
+  while the header row directly above kept its three columns. Real case: a
+  warranty table data row, where `find_tables` correctly returned a single cell
+  spanning 65.5→491.6 because the source **draws no vertical rules on data
+  rows**, so 1.8.0's `vertical_rules` (right to refuse the split) never applied.
+  The row is now split into per-column sub-regions before fitting, each keeping
+  its own `base_x`. Evidence that an x is a real column rather than an indent:
+  **the same x appears on ≥2 different rows** — a grid repeats, an indent does
+  not — plus `region_type == table_cell`, which excludes list labels like `(i)`
+  or `a.` that also produce several x values but live in `paragraph`, where
+  reflowing into one column is the correct behaviour. Contract with the
+  translation: each `\n`-separated segment is one column, left to right; if the
+  segment count does not match, the old behaviour stands and the engine does not
+  guess. Sub-regions carry the parent's `region_id`, so masking, `painted_ids`
+  and Gates 3/4 still score against the parent box.
+- **Hand-fill blanks now flow with the translated text.** Forms leave space to
+  write on with a **vector underline**; masking deliberately preserves line art
+  (`PDF_REDACT_LINE_ART_NONE`) so the rule survives painting, while `tokenize`
+  collapses all whitespace to a single space, so the translation could not
+  recreate the gap — text ran over the rule and the form became unusable.
+  `fill_in_rules` (in `_common.py`, beside `vertical_rules` so every stage reads
+  one definition) detects those rules at stage 2 and records them in
+  `reg["fill_rules"]`; stage 3 routes a warning into `source_warnings` so the
+  model re-creates the blank as a run of `____`; stage 6 removes the original
+  rule in a **separate redaction pass with `text=NONE`** — the rule's rect is
+  only ~1pt tall but sits on the baseline, so sharing a pass with `text=REMOVE`
+  would eat glyphs from regions meant to stay untouched.
+
+### Fixed
+
+- `digit_drift` normalises Unicode superscripts to plain digits before counting.
+  Sources print footnote markers as a small-size span (`Energy Retention³`), but
+  the engine paints **one font size per region**, so the translation must use
+  `¹²³⁴⁵⁶` to stop the marker dropping to the baseline (`năng3` reads as a typo
+  in a legal text). Without normalisation every footnote marker was reported as a
+  missing digit — 8 false positives on the warranty documents alone — and waiving
+  `NUMBER_DRIFT` wholesale would have hidden a genuine drift. The real defect
+  (`"3 Interface and Components"` → `"3.1 Dụng cụ"`) is still caught after
+  normalisation.
+
+### Note
+
+- No layout model change. `region_id`, `container` and the `responses.jsonl` of
+  every existing job are unchanged; old jobs only need stages 5-7 re-run.
+
 ## [1.8.4] - 2026-08-06
 
 ### Added

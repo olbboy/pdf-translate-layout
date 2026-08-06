@@ -24,6 +24,9 @@ PH_RE = re.compile(r"⟦([A-Z]+_\d+)⟧")
 # `INK_DESCENT_EM`, nếu không fitter tưởng vừa còn gate lại báo tràn.
 INK_ASCENT_EM = 1.3
 INK_DESCENT_EM = 0.45
+# Dãy gạch dưới trong bản dịch = ô trống điền tay đặt lại. 3 dấu trở lên để không nhầm
+# với dấu gạch dưới trong định danh kỹ thuật (ess_support, Port_1).
+BLANK_RUN_RE = re.compile(r"_{3,}")
 SUBSET_PREFIX_RE = re.compile(r"^[A-Z]{6}\+")
 # Family quen thuộc — style-class mapping đáng tin; ngoài list = display font
 # → review trigger theo spec §11.4.
@@ -230,6 +233,78 @@ def expandable_region(reg: dict) -> bool:
     if reg["region_type"] == "paragraph":
         return len(t.split()) <= LABEL_MAX_WORDS and len(t) <= LABEL_MAX_CHARS
     return False
+
+
+COLUMN_X_TOL = 3.0   # hai dòng coi là cùng một cột khi origin x lệch dưới ngần này
+COLUMN_Y_TOL = 2.0   # hai dòng coi là cùng một hàng khi baseline lệch dưới ngần này
+
+
+def column_split(reg: dict) -> list[dict] | None:
+    """Ô bảng gộp nhiều cột → một sub-region cho mỗi cột; None nếu không phải ca đó.
+
+    Vì sao cần: `fit_region` vẽ MỌI dòng từ `base_x` của span đầu region, nên một hàng bảng
+    mà PDF khai là MỘT cell duy nhất bị dồn hết về mép trái — mất cấu trúc cột trong khi
+    hàng tiêu đề ngay trên vẫn giữ 3 cột. Ca thật: hàng dữ liệu của bảng bảo hành V16,
+    `find_tables` trả đúng một cell trải 65.5→491.6 vì bản gốc không kẻ nét dọc ở hàng đó,
+    nên luật cắt cột theo `vertical_rules` của 1.8.0 (đúng khi từ chối) không đụng tới.
+
+    Bằng chứng để coi là cột thật chứ không phải thụt lề: **cùng một x xuất hiện ở ít nhất
+    hai hàng y khác nhau** — lưới thì lặp, thụt lề thì không. Thêm điều kiện `table_cell`
+    để loại hẳn nhãn danh sách ("(i)", "a.") vốn cũng sinh nhiều x nhưng nằm trong
+    `paragraph`, và ở đó reflow về một cột lại là hành vi đúng.
+
+    Hợp đồng với bản dịch: mỗi đoạn phân tách bằng "\\n" trong target ứng với một cột, theo
+    thứ tự trái→phải. Lệch số đoạn thì trả None để giữ nguyên hành vi cũ — người dịch sửa
+    response, engine không tự đoán.
+    """
+    if reg["region_type"] != "table_cell" or reg["rotation"] != 0:
+        return None
+    if len(reg["lines"]) < 3:
+        return None
+
+    origins = [(l["spans"][0]["origin"][0], l["spans"][0]["origin"][1], l)
+               for l in reg["lines"]]
+    rows: list[float] = []
+    for _, y, _ in origins:
+        if not any(abs(y - r) <= COLUMN_Y_TOL for r in rows):
+            rows.append(y)
+    if len(rows) < 2:
+        return None
+
+    cols: list[float] = []
+    for x, _, _ in origins:
+        if not any(abs(x - cx) <= COLUMN_X_TOL for cx in cols):
+            cols.append(x)
+    cols.sort()
+    if len(cols) < 2:
+        return None
+
+    def col_of(x): return min(range(len(cols)), key=lambda k: abs(x - cols[k]))
+    def row_of(y): return min(range(len(rows)), key=lambda k: abs(y - rows[k]))
+
+    # Lưới thật: >=2 cột mà mỗi cột có dòng ở >=2 hàng khác nhau.
+    spread = [len({row_of(y) for x, y, _ in origins if col_of(x) == k}) for k in range(len(cols))]
+    if sum(1 for n in spread if n >= 2) < 2:
+        return None
+
+    segments = "\n".join(r["text"] for r in reg["target_runs"]).split("\n")
+    if len(segments) != len(cols):
+        return None
+
+    c = reg["container"]
+    subs = []
+    for k, cx in enumerate(cols):
+        lines = [l for x, _, l in origins if col_of(x) == k]
+        if not lines:
+            return None
+        right = cols[k + 1] if k + 1 < len(cols) else c[2]
+        sub = dict(reg)
+        sub["lines"] = sorted(lines, key=lambda l: l["spans"][0]["origin"][1])
+        sub["container"] = [min(c[0], cx), c[1], right, c[3]]
+        sub["target_runs"] = [{"role": reg["target_runs"][0]["role"], "text": segments[k]}]
+        sub["column_index"] = k
+        subs.append(sub)
+    return subs
 
 
 def fit_region(reg: dict, pack: FontPack, cfg: dict,
@@ -532,7 +607,8 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
 
     issues: list[dict] = []
     manifest = {"generated_at": utc_now(), "partial": bool(pending or pages_filter),
-                "pages": {}, "regions": [], "skipped": [], "issues": issues}
+                "pages": {}, "regions": [], "skipped": [], "blank_rules_removed": [],
+                "issues": issues}
 
     doc = pymupdf.open(job.source_pdf)
     by_page: dict[int, list[dict]] = {}
@@ -561,6 +637,20 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                           "margins": doc_margins}
 
         fitted: list[tuple[dict, dict]] = []
+        # Ô bảng gộp nhiều cột được tách thành sub-region trước khi fit, mỗi cột giữ đúng
+        # `base_x` của nó. Sub-region mang nguyên region_id của cha nên mask, `painted_ids`
+        # và Gate 3/4 vẫn chấm theo khung cha — tách chỉ là chuyện nội bộ của paint.
+        expanded: list[dict] = []
+        for reg in regs:
+            subs = column_split(reg) if reg.get("target_runs") else None
+            if subs:
+                issues.append(make_issue(
+                    "TABLE_ROW_COLUMNS", "P2", STAGE,
+                    f"hàng bảng gộp {len(subs)} cột — vẽ mỗi cột tại x nguồn của nó",
+                    page=pno, region_id=reg["region_id"]))
+            expanded += subs or [reg]
+        regs = expanded
+
         for reg in regs:
             if expand_ctx is not None:
                 # bbox của chính region không phải vật cản của nó
@@ -606,6 +696,35 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                               graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
                               text=pymupdf.PDF_REDACT_TEXT_REMOVE)
 
+        # Ô trống điền tay: gạch của bản gốc neo cứng theo hàng nguồn, mà bản dịch wrap
+        # khác hẳn — giữ lại thì chữ đè lên gạch. Xoá gạch cũ ở đây, dãy '____' trong bản
+        # dịch thay chỗ và chảy cùng chữ. Lượt redaction RIÊNG với text=NONE: rect gạch chỉ
+        # cao ~1pt nhưng nằm đúng baseline nên chạm bbox glyph liền kề — dùng chung lượt
+        # với text=REMOVE sẽ ăn mất chữ của region giữ nguyên.
+        blanks = [(reg, r) for reg, _ in ok_regions
+                  for r in (reg.get("fill_rules") or [])
+                  if BLANK_RUN_RE.search("".join(x["text"] for x in reg["target_runs"]))]
+        if blanks:
+            for _, r in blanks:
+                page.add_redact_annot(pymupdf.Rect(r[0], r[1] - 0.6, r[2], r[3] + 0.6),
+                                      fill=False)
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                                  text=pymupdf.PDF_REDACT_TEXT_NONE)
+            manifest["blank_rules_removed"] += [
+                {"page": pno, "region_id": reg["region_id"],
+                 "rect": [round(v, 2) for v in r]} for reg, r in blanks]
+        missing_blank = [reg["region_id"] for reg, _ in ok_regions
+                         if reg.get("fill_rules")
+                         and not BLANK_RUN_RE.search(
+                             "".join(x["text"] for x in reg["target_runs"]))]
+        for rid in dict.fromkeys(missing_blank):
+            issues.append(make_issue(
+                "FILL_BLANK_DROPPED", "P1", STAGE,
+                "nguồn có ô trống điền tay nhưng bản dịch không đặt lại dãy '____' — "
+                "gạch gốc giữ nguyên và chữ dịch sẽ đè lên, biểu mẫu hết dùng được",
+                page=pno, region_id=rid))
+
         for reg, fr in ok_regions:
             for line in fr["lines"]:
                 for seg in line["segments"]:
@@ -625,6 +744,7 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             manifest["regions"].append({
                 "region_id": reg["region_id"], "page": pno, **{k: fr[k] for k in
                 ("size", "src_size", "ratio", "alignment", "rotation")},
+                **({"column": reg["column_index"]} if "column_index" in reg else {}),
                 "line_count": len(fr["lines"]),
                 "fonts": sorted({s["font"] for l in fr["lines"] for s in l["segments"]}),
             })

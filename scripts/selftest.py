@@ -6,8 +6,9 @@ import os
 import re
 import unicodedata
 
-from _common import STATUS_TRANSITIONS, BlockingError as _BE, nfc, new_job_id, slug
-from fit_paint import wrap_lines
+from _common import (STATUS_TRANSITIONS, BlockingError as _BE, fill_in_rules, nfc,
+                     new_job_id, slug)
+from fit_paint import column_split, wrap_lines
 from translate_prep import NUMERIC_RE, PH_DIGIT_ADJ as _PDA, PH_RE, protect, restore
 from validate_responses import apply_punct_map
 
@@ -92,6 +93,96 @@ check("wrap khe không đều: khe hẹp giữ đủ ba token",
       and len(wrap_lines([10, 10, 10], [1.0, 1.0, 1.0], 32)) == 1)
 check("wrap khe list == khe scalar khi mọi khe bằng nhau",
       wrap_lines([10, 10, 10], [2.0, 2.0, 2.0], 25) == wrap_lines([10, 10, 10], 2, 25))
+
+# column_split (1.9.0) — hàng bảng gộp nhiều cột. Dựng region tối thiểu đúng hình học
+# hàng dữ liệu bảng bảo hành V16: 3 cột × 2 hàng, x lặp lại ở cả hai hàng.
+def _reg(rtype, xy, target, container=(66, 571, 491, 615)):
+    return {"region_type": rtype, "rotation": 0, "container": list(container),
+            "lines": [{"spans": [{"origin": [x, y], "text": "x"}]} for x, y in xy],
+            "target_runs": [{"role": "body", "text": target}]}
+
+
+_GRID = [(70.9, 583.2), (205.8, 583.2), (338.5, 583.2), (338.5, 598.9), (205.8, 598.9)]
+_subs = column_split(_reg("table_cell", _GRID, "V16\ncột hai\ncột ba"))
+check("column_split: hàng 3 cột tách đúng 3", _subs is not None and len(_subs) == 3)
+check("column_split: mỗi cột giữ base_x riêng",
+      _subs is not None
+      and [round(s["lines"][0]["spans"][0]["origin"][0], 1) for s in _subs] == [70.9, 205.8, 338.5])
+check("column_split: khung cột chặn ở cột kế tiếp",
+      _subs is not None and [round(s["container"][2], 1) for s in _subs] == [205.8, 338.5, 491.0])
+check("column_split: lệch số đoạn thì không tách",
+      column_split(_reg("table_cell", _GRID, "chỉ một đoạn")) is None)
+check("column_split: paragraph không tách dù nhiều x (nhãn danh sách)",
+      column_split(_reg("paragraph", _GRID, "a\nb\nc")) is None)
+# Thụt lề không lặp qua nhiều hàng → không phải lưới.
+check("column_split: thụt lề một cấp không bị coi là cột",
+      column_split(_reg("table_cell", [(70.9, 583.2), (106.9, 583.2), (70.9, 598.9)],
+                        "a\nb")) is None)
+
+# fill_in_rules (1.9.0) — ô trống điền tay. Hình học thật của Terms of Warranty p1 và của
+# nhãn chú thích hình Lite quick guide p8 (ca báo oan phải loại).
+def _reg_lines(bboxes, container):
+    return {"container": list(container),
+            "lines": [{"bbox": list(b), "spans": [{"origin": [b[0], (b[1] + b[3]) / 2]}]}
+                      for b in bboxes]}
+
+
+_FORM = _reg_lines([(70.9, 229.0, 121.9, 242.6), (223.9, 229.0, 470.9, 242.6)],
+                   (70.9, 224.4, 572.9, 249.3))
+check("fill_in_rules: gạch có chữ hai phía = ô trống",
+      len(fill_in_rules(_FORM, [(121.9, 237.6, 223.9, 237.6)])) == 1)
+# Nhãn `Handle` + đường dẫn ngang chỉ vào hình: chữ chỉ nằm bên trái gạch.
+_LABEL = _reg_lines([(200.0, 461.0, 221.3, 474.0)], (196.0, 458.0, 300.0, 478.0))
+check("fill_in_rules: đường dẫn nhãn hình KHÔNG phải ô trống",
+      fill_in_rules(_LABEL, [(221.3, 467.8, 239.4, 467.8)]) == [])
+check("fill_in_rules: nét kẻ trải gần hết khung là kẻ bảng, bỏ qua",
+      fill_in_rules(_FORM, [(75.0, 237.6, 560.0, 237.6)]) == [])
+check("fill_in_rules: gạch ngoài dải mực của dòng thì bỏ qua",
+      fill_in_rules(_FORM, [(121.9, 300.0, 223.9, 300.0)]) == [])
+
+# decisions.jsonl chỉ được ghi khi quyết định ĐÃ có hiệu lực (1.9.1). Bất biến này nằm ở
+# thứ tự lệnh trong `main()` nên không test bằng hàm thuần được — soi thẳng mã nguồn.
+# Ca thật 2026-08-06 job HV48100: reviewer gõ sai chuỗi xác nhận, release bị chặn đúng
+# nhưng nhật ký append-only vẫn giữ mãi dòng "Leo approved" cho một job chưa từng phát hành.
+_APPROVE_SRC = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "approve.py"), encoding="utf-8").read()
+_common_path = _APPROVE_SRC[_APPROVE_SRC.index("decision = {"):
+                            _APPROVE_SRC.index('if args.decision == "reject"')]
+# Đếm CHỖ GỌI, không đếm chỗ định nghĩa: dòng gọi chỉ có `record()`, còn dòng định nghĩa
+# là `def record() -> None:` nên không khớp neo đầu/cuối dòng.
+_CALL_RE = re.compile(r"^\s+record\(\)$", re.M)
+# Neo đúng 12 dấu cách = mức lệnh trong `with job.acquire_lock(...)`. Thân của `record()`
+# thụt 16 nên không dính; nhờ vậy check này tự bắt được cả kiểu ghi thẳng `append_jsonl`
+# trên đường chung — đúng thứ tự cũ đã gây sự cố — chứ không phải chỉ bắt `record()`.
+_STMT_WRITE_RE = re.compile(r"^ {12}(?:record\(\)|append_jsonl\()", re.M)
+check("approve: không ghi decisions.jsonl trên đường chung (trước mọi chốt)",
+      not _STMT_WRITE_RE.search(_common_path))
+check("approve: append_jsonl chỉ có một chỗ gọi duy nhất, nằm trong record()",
+      _APPROVE_SRC.count("append_jsonl(") == 1)
+check("approve: đúng ba nhánh quyết định, mỗi nhánh ghi một lần",
+      len(_CALL_RE.findall(_APPROVE_SRC)) == 3)
+check("approve: ghi decisions.jsonl SAU chốt human-terminal",
+      _APPROVE_SRC.index("require_human_terminal(job)")
+      < _APPROVE_SRC.rindex("record()"))
+check("approve: ghi decisions.jsonl TRƯỚC khi lật trạng thái phát hành",
+      _APPROVE_SRC.rindex("record()") < _APPROVE_SRC.index('set_status("HUMAN_APPROVED"'))
+
+# Cây thư mục job phải tự lành ở MỌI stage (1.9.2), không chỉ ở preflight: thư mục rỗng biến
+# mất qua git/zip/rsync, và job dựng bằng engine cũ có SUBDIRS ngắn hơn. Hai ca đổ thật đều
+# cùng gốc — `output/` (approve, 1.8.2) và `qa/page_png/` (qa_gates). Mọi stage vào qua
+# acquire_lock nên test đúng chỗ đó.
+import tempfile
+from _common import Job as _Job
+
+with tempfile.TemporaryDirectory() as _tmp:
+    _job = _Job(_tmp)
+    check("job dir: thiếu thư mục trước khi vào stage",
+          not os.path.isdir(_job.p("qa", "page_png")))
+    with _job.acquire_lock("selftest"):
+        _missing = [d for d in _Job.SUBDIRS if not os.path.isdir(_job.p(d))]
+    check("job dir: acquire_lock tạo đủ mọi SUBDIRS", not _missing, str(_missing))
+    check("job dir: SUBDIRS phủ đúng các thư mục từng gây lỗi",
+          {"qa/page_png", "qa/diffs", "output"} <= set(_Job.SUBDIRS))
 
 # state machine terminals — RELEASED không còn terminal: chỉ được phép thu hồi (REVOKED)
 for terminal in ("MANUAL_DTP", "REJECTED", "CANCELLED"):
@@ -195,6 +286,14 @@ check("digit_drift: đổi dấu phân cách nghìn OK",
       digit_drift("Rated capacity 1,000 Wh", "Dung lượng định mức 1.000 Wh") is None)
 check("digit_drift: số trong placeholder không tính",
       digit_drift("Charge: ⟦MEAS_1⟧~⟦MEAS_2⟧", "Sạc: ⟦MEAS_1⟧~⟦MEAS_2⟧") is None)
+# 1.9.0: dấu chú thích phải dùng ký tự số mũ Unicode (engine vẽ một cỡ chữ cho cả region),
+# nên chữ số dạng số mũ được quy về chữ số thường trước khi đếm. ¹²³ ở Latin-1, ⁴⁵⁶ ở U+2070.
+for _mark, _sup in (("1", "¹"), ("2", "²"), ("3", "³"),
+                    ("4", "⁴"), ("5", "⁵"), ("6", "⁶")):
+    check(f"digit_drift: dấu chú thích {_sup} không bị báo thiếu",
+          digit_drift(f"Energy Retention{_mark}", f"Mức duy trì điện năng{_sup}") is None)
+check("digit_drift: quy số mũ vẫn bắt được lệch số thật",
+      digit_drift("Retention3 of 70%", "Mức duy trì³ 90%") is not None)
 # Ca thật audit Lite: câu cấm nối tiếp bị rơi hẳn khỏi target.
 check("negation_drop: rơi câu forbidden",
       negation_drop("Batteries connected in series are forbidden, high voltage would lead to hazard shock.",

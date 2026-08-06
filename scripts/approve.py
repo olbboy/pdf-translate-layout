@@ -79,13 +79,32 @@ def main() -> None:
             qa = load_json(job.p("qa", "report.json"))
             if not qa:
                 raise BlockingError("chưa có qa/report.json — chạy qa_gates trước")
-            decision = {"ts": utc_now(), "approver": args.approver,
+            decision = {"approver": args.approver,
                         "decision": args.decision, "note": args.note,
                         "waivers": waivers,
                         "qa_result": qa["result"], "severity": qa["severity_all"]}
-            append_jsonl(job.p("review", "decisions.jsonl"), decision)
+
+            def record() -> None:
+                """Ghi decisions.jsonl — gọi CHỈ khi quyết định đã thực sự có hiệu lực.
+
+                `decisions.jsonl` là append-only và là hồ sơ kiểm toán "ai duyệt cái gì"
+                (SKILL.md §1.2), nên một dòng ở đây phải đồng nghĩa với một thay đổi trạng
+                thái đã xảy ra. Thứ tự cũ ghi ngay khi vào lệnh, TRƯỚC cả `require_human_terminal`
+                và các chốt P0/P1 — sự cố thật 2026-08-06 trên job HV48100: reviewer gõ sai
+                chuỗi xác nhận, release bị chặn đúng (job giữ NEEDS_REVIEW, không có bản phát
+                hành nào), nhưng nhật ký vẫn còn dòng "Leo approved" mãi mãi vì file
+                append-only không xoá được. Nhật ký nói sai sự thật là hỏng đúng thứ nó tồn
+                tại để bảo vệ.
+
+                Đặt ngay TRƯỚC `set_status` chứ không phải sau: Release rule đòi bản phát
+                hành phải có decision kèm approver + timestamp, nên trạng thái RELEASED mà
+                thiếu dòng ghi còn tệ hơn chiều ngược lại.
+                """
+                append_jsonl(job.p("review", "decisions.jsonl"),
+                             {"ts": utc_now(), **decision})
 
             if args.decision == "reject":
+                record()
                 job.set_status("REJECTED", f"reviewer {args.approver} reject")
                 job.write_summary(f"Bị reject bởi {args.approver}: {args.note or '(no note)'}")
                 print("rejected — đã ghi decisions.jsonl")
@@ -95,6 +114,7 @@ def main() -> None:
                 # Thu hồi release đã phát hành (vd: approval giả mạo, lỗi phát hiện muộn).
                 if job.status() != "RELEASED":
                     raise BlockingError(f"revoke chỉ áp dụng cho job RELEASED (hiện: {job.status()})")
+                record()
                 job.set_status("REVOKED", f"reviewer {args.approver} revoke: {args.note or '(no note)'}")
                 out = job.p("output", "translated-approved.pdf")
                 if os.path.exists(out):
@@ -134,6 +154,7 @@ def main() -> None:
             # RELEASED mà không có bản phát hành nào — đúng thứ không bao giờ được phép xảy ra.
             out = job.p("output", "translated-approved.pdf")
             tmp = stage_release_copy(job.p("render", "draft.pdf"), out)
+            record()
             job.set_status("HUMAN_APPROVED",
                            f"approver={args.approver} waived={sorted(waivers)}")
             job.set_status("RELEASED")

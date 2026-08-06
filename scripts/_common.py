@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.8.4"
+ENGINE_VERSION = "1.9.4"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
@@ -73,6 +73,57 @@ def vertical_rules(page: pymupdf.Page, tol: float = 0.8) -> list:
                     out.append((r.x0, r.y0, r.y1))
                     out.append((r.x1, r.y0, r.y1))
     return out
+
+
+# Ô trống điền tay: nét ngang mảnh, đủ dài để viết lên.
+FILL_RULE_MAX_H = 1.5
+FILL_RULE_MIN_W = 10.0
+# Gạch trải gần hết khung region là nét kẻ bảng, không phải chỗ điền.
+FILL_RULE_MAX_W_RATIO = 0.9
+FILL_RULE_Y_SLACK = 2.0    # gạch nằm ở hoặc ngay dưới baseline
+FILL_RULE_ROW_TOL = 2.5    # hai dòng cùng một hàng khi baseline lệch dưới ngần này
+FILL_RULE_GAP_TOL = 8.0    # khe cho phép giữa mép chữ và mép gạch
+
+
+def horizontal_rules(page) -> list:
+    """Nét kẻ ngang mảnh trên trang → [(x0, y0, x1, y1)]."""
+    return [(d["rect"].x0, d["rect"].y0, d["rect"].x1, d["rect"].y1)
+            for d in page.get_drawings()
+            if d["rect"].height <= FILL_RULE_MAX_H and d["rect"].width >= FILL_RULE_MIN_W]
+
+
+def fill_in_rules(reg: dict, page_rules: list) -> list:
+    """Nét gạch chân dành cho người điền tay, nằm GIỮA chữ của region → [[x0,y0,x1,y1]].
+
+    Biểu mẫu (Terms of Warranty, thoả thuận đại lý) chừa chỗ điền bằng một nét vẽ vector.
+    Mask cố ý không xoá line-art nên nét đó sống qua paint, trong khi `tokenize` gộp mọi
+    khoảng trắng thành một dấu cách — bản dịch không tạo lại được khe, chữ chạy đè lên gạch
+    và ô trống hết dùng được.
+
+    Điều kiện quyết định là **có chữ ở CẢ HAI phía trên cùng một hàng**. Luật lỏng hơn (chỉ
+    đòi gạch nằm trong dải mực của một dòng) đo trên 5 tài liệu cho 6 đúng / **11 oan** —
+    toàn bộ 11 ca oan là nhãn chú thích hình có đường dẫn ngang (`Handle`, `Drill template`,
+    `Battery side wall-mounted bracket` của Lite quick guide), nơi chữ chỉ nằm một bên.
+    Thêm điều kiện hai phía: **6 đúng / 0 oan** trên cùng tập đo.
+    """
+    c = reg["container"]
+    cw = c[2] - c[0]
+    hits = []
+    for x0, y0, x1, y1 in page_rules:
+        if x1 - x0 > FILL_RULE_MAX_W_RATIO * cw:
+            continue
+        band = [ln for ln in reg["lines"]
+                if ln["bbox"][1] <= y0 <= ln["bbox"][3] + FILL_RULE_Y_SLACK]
+        if not band:
+            continue
+        ybase = min(l["spans"][0]["origin"][1] for l in band)
+        row = [ln for ln in reg["lines"]
+               if abs(ln["spans"][0]["origin"][1] - ybase) <= FILL_RULE_ROW_TOL]
+        left = any(abs(ln["bbox"][2] - x0) <= FILL_RULE_GAP_TOL for ln in row)
+        right = any(abs(ln["bbox"][0] - x1) <= FILL_RULE_GAP_TOL for ln in row)
+        if left and right:
+            hits.append([x0, y0, x1, y1])
+    return hits
 
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -436,6 +487,15 @@ class _JobLock:
         self.path = job.p(".lock")
 
     def __enter__(self):
+        # Mọi stage đều vào qua đây, nên đây là chỗ duy nhất bảo đảm được cây thư mục job.
+        # `ensure_dirs()` trước 1.9.2 chỉ chạy MỘT LẦN ở preflight, nên job nào thiếu thư
+        # mục thì mọi stage sau đổ ngay tại lệnh ghi: `Job.p()` chỉ ghép chuỗi, không tạo
+        # thư mục. Hai ca thật đều cùng gốc này: 2026-08-06 `output/` không có nên
+        # `copyfile` của approve ném FileNotFoundError (vá cục bộ ở 1.8.2), và
+        # `qa_gates` lưu PNG vào `qa/page_png/` cũng đổ y hệt khi thư mục vắng.
+        # Thư mục RỖNG biến mất qua git/zip/rsync và job dựng bằng engine cũ có SUBDIRS
+        # ngắn hơn — nên không thể coi "preflight đã tạo rồi" là bảo đảm.
+        self.job.ensure_dirs()
         if os.path.exists(self.path):
             try:
                 old = json.load(open(self.path, encoding="utf-8"))

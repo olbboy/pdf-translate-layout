@@ -19,6 +19,12 @@ PH_RE = re.compile(r"⟦([A-Z]+_\d+)⟧")
 # Chuỗi chữ số liền nhau. So theo multiset chuỗi (không parse thành số) nên đổi dấu phân
 # cách nghìn/thập phân "1,000" ↔ "1.000" không bị báo — cả hai đều cho {"1", "000"}.
 DIGIT_RUN_RE = re.compile(r"\d+")
+# Số mũ Unicode → chữ số thường, để dấu chú thích ("Retention³") đếm bằng "Retention3".
+# Viết bằng escape vì 1/2/3 nằm ở khối Latin-1 (U+00B9/B2/B3) còn 0 và 4-9 ở U+2070 —
+# gõ trực tiếp rất dễ lẫn hai bộ và mất tác dụng quy đổi.
+_SUP_DIGITS = str.maketrans("\u2070\u00b9\u00b2\u00b3\u2074\u2075"
+                            "\u2076\u2077\u2078\u2079",
+                            "0123456789")
 
 # Phủ định phía EN. Đo trên 7185 cặp của 14 job để loại từng nguồn báo oan:
 # - "No." cột bảng (= Number) và "No.3492" địa chỉ → chỉ nhận "no" khi theo sau là từ
@@ -117,9 +123,15 @@ def digit_drift(source: str, target: str) -> tuple[dict, dict] | None:
     Anh, nên Gate 2 authenticity im lặng; chỉ tập chữ số là lệch.
 
     So trên dạng placeholder: số nằm trong ⟦MEAS_n⟧ không tính, chỉ số hiện trên mặt chữ.
+
+    Chữ số dạng SỐ MŨ được quy về chữ số thường trước khi đếm. Nguồn in dấu chú thích
+    bằng span cỡ nhỏ ("Energy Retention³"), mà engine vẽ một cỡ chữ cho cả region nên bản
+    dịch phải dùng ký tự số mũ Unicode để dấu không tụt xuống thành chữ thường. Không quy
+    đổi thì mọi dấu chú thích đều bị báo thiếu chữ số — 8 báo giả trên riêng Terms of
+    Warranty, và waive cả mã sẽ che mất một ca lệch số thật.
     """
-    src = collections.Counter(DIGIT_RUN_RE.findall(source))
-    tgt = collections.Counter(DIGIT_RUN_RE.findall(target))
+    src = collections.Counter(DIGIT_RUN_RE.findall(source.translate(_SUP_DIGITS)))
+    tgt = collections.Counter(DIGIT_RUN_RE.findall(target.translate(_SUP_DIGITS)))
     if src == tgt:
         return None
     return dict(src - tgt), dict(tgt - src)

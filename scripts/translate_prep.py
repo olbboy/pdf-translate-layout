@@ -163,6 +163,14 @@ def prep(job: Job) -> None:
                 f"chữ số dính placeholder: {m_adj.group(0)!r} — nguồn có thể đặt sai dấu "
                 "cách trong một số đo",
                 page=reg["page"], region_id=reg["region_id"]))
+        n_blank = len(reg.get("fill_rules") or [])
+        if n_blank:
+            warnings.append(
+                f"Region này có {n_blank} ô trống để người dùng ĐIỀN TAY (bản gốc vẽ bằng "
+                "gạch chân). Bản dịch phải đặt lại đúng ngần ấy ô trống bằng một dãy dấu "
+                "gạch dưới ('________') ở đúng chỗ cần điền — engine sẽ xoá gạch của bản "
+                "gốc và để dãy gạch dưới của bạn chảy theo chữ. Thiếu ô trống thì biểu mẫu "
+                "hết dùng được.")
 
         # context per spec §6.6
         idx = reg["reading_index"]

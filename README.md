@@ -93,6 +93,23 @@ translation step itself with the session's own model, and records that model id
 in the job's determinism tuple (`preflight.py --provider-model`), following
 `SKILL.md` and the generated `AGENT_INSTRUCTIONS.md`.
 
+**Lock the engine before handing work to an agent.** Every guard in this package
+is written in Python and lives in a tree the agent can write to, which makes it a
+voluntary guard — that is exactly how Antigravity disabled the approval gate.
+Filesystem write permission is not voluntary:
+
+```bash
+bash scripts/lock-engine.sh lock     # chmod a-w on scripts/, assets/, SKILL.md
+                                     # then run your agent
+bash scripts/lock-engine.sh verify   # BEFORE trusting the result
+bash scripts/lock-engine.sh unlock   # when you need to edit the engine yourself
+```
+
+`verify` compares a SHA-256 manifest and, if the engine is in a git repo, checks
+that git sees it clean. Point `PDFTL_JOBS` at your job root to also scan it for
+`.py` files the agent may have generated — writing translations with a script
+instead of a model is a P0 that cannot be waived (§1.6).
+
 ### Manually (agent-less)
 
 Every deterministic stage is a standalone CLI:

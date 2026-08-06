@@ -13,9 +13,9 @@ import statistics
 import pymupdf
 
 import build_context_graph as _cg
-from _common import (RERUNNABLE_STATUSES, BlockingError, Job, exit_blocking,
-                     layout_model_for, load_json, make_issue, nfc, save_json, sha256_text,
-                     utc_now, vertical_rules)
+from _common import (RERUNNABLE_STATUSES, BlockingError, Job, exit_blocking, fill_in_rules,
+                     horizontal_rules, layout_model_for, load_json, make_issue, nfc,
+                     save_json, sha256_text, utc_now, vertical_rules)
 
 STAGE = "extract_group"
 DIR_TO_ROT = {(1, 0): 0, (0, -1): 90, (-1, 0): 180, (0, 1): 270}
@@ -518,11 +518,17 @@ def extract(job: Job) -> None:
 
         # 5) container + alignment + id
         obstacles_all = img_boxes + draw_boxes
+        page_hrules = horizontal_rules(page)
         for idx, reg in enumerate(ordered):
             if "container" not in reg:
                 others = [r["bbox"] for r in ordered if r is not reg]
                 compute_container(reg, others + obstacles_all, list(page.rect), lh)
             reg["alignment"] = infer_alignment(reg["lines"], reg["container"])
+            # Ô trống điền tay — metadata thuần, KHÔNG đụng source_text/source_hash/region_id
+            # nên job đã dịch chạy lại stage 2 không bị mồ côi response.
+            fr = fill_in_rules(reg, page_hrules)
+            if fr:
+                reg["fill_rules"] = [[round(v, 2) for v in r] for r in fr]
             qx, qy = int(reg["container"][0] // 8), int(reg["container"][1] // 8)
             reg["region_id"] = f"{fp8}/p{pno}/{reg['region_type']}/{qx}_{qy}/{idx}"
             reg["reading_index"] = idx
