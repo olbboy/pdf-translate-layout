@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.5"
+  version: "1.9.6"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.5 (engine `1.9.5`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.6 (engine `1.9.6`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -294,6 +294,35 @@ metadata:
 > vẫn báo thiếu `'1'`), và thiếu một trong hai ký tự trùng nhau vẫn bị bắt vì đếm theo bội.
 > Không đụng layout, không đụng `region_id`, không đụng bản dịch — job cũ chỉ cần chạy lại
 > stage 7.
+> **1.9.6** `base_x` đo theo **nét mực đầu tiên**, không theo origin của span đầu. Bản gốc
+> hay căn chữ bằng **dãy space** thay vì thuộc tính căn lề; space có advance nhưng không vẽ
+> gì, nên origin span đầu nằm ở đầu dãy space còn chữ thật bắt đầu xa hơn về bên phải. Ca
+> thật V5 Series user manual, ô `Pictures` của bảng cấu hình: `container_x0 = 282.6`,
+> `origin = 282.6`, nhưng nét mực bắt đầu ở `325.1`. `tokenize` bỏ sạch token khoảng trắng
+> — đã thử đủ 8 loại space Unicode kể cả nbsp, tất cả đều rơi qua `expanded.strip()` — nên
+> bản dịch không tái tạo được dãy đó và bị kéo tụt về đầu dãy space. Lệch đo được tới
+> **151pt**; hệ quả là hàng tiêu đề bảng tụt sang cột bên cạnh (19 cờ `G4_TABLE_RULE_CROSS`
+> trên riêng job đó).
+> **Cùng lớp lỗi 1.8.0 đã sửa một nửa**: hồi đó cho `build_lines` đo `ink_bbox` để khung ô
+> thôi phình ra vì space đầu/đuôi, nhưng `base_x` vẫn lấy từ origin có đệm.
+> Guard: **chỉ nâng** cho region một dòng, hoặc region mà mọi dòng bắt đầu ở cùng một x
+> (±1pt) — văn xuôi nhiều dòng có thụt lề dòng đầu (kiểu danh sách gạch đầu dòng) thì dời
+> `base_x` sẽ thụt cả khối, đổi lỗi này lấy lỗi khác. Không bao giờ hạ: nét mực không thể
+> nằm trái hơn origin.
+> Đo trên 2 job có `regions.json` và có vùng lệch: đổi cách vẽ **36 region** (32 V5 + 4
+> HV48100, tất cả `align=left`, guard cho qua); 47 region `center/right` cũng lệch nhưng
+> **không đổi gì** vì x của chúng tính từ container chứ không từ `base_x`; 2 region bị guard
+> chặn đúng. Bonus: trả lại thụt lề gạch đầu dòng cho HV48100.
+> **Đã thử và LOẠI hai luật căn lề** cho các dòng mục lục có số trang nằm chung region:
+> (a) "mép trái chữ cách mép container <12pt thì là left" — đổi 122 region, phá hỏng những
+> ô bảng vốn căn giữa thật (số thứ tự `1`,`2`,`3` trong cột hẹp có lgap 8.2pt); (b) "dòng
+> lấp ≥80% khung thì là left" — đổi 60 region, cũng phá hỏng nhãn ngắn căn giữa trong ô khít
+> (`Grounding Cable` 0.90, `Blink 3` 0.82). Cả hai đều đổi một lỗi lấy một lỗi, nên **không
+> ship**. Các dòng mục lục kiểu đó là bài toán **hai cột trong một region** — đúng phạm vi
+> `column_split` (1.9.0) nhưng nó đang chốt ở `region_type == table_cell`; mở rộng là việc
+> thiết kế riêng, chưa làm.
+> Không đụng `region_id`, không đụng `container`, không đụng bản dịch — job cũ chỉ cần chạy
+> lại stage 6-7.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

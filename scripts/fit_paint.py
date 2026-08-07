@@ -142,6 +142,33 @@ def role_style(reg: dict, role: str) -> dict:
     return reg["runs"][0]
 
 
+def ink_base_x(reg: dict, span_x: float) -> float:
+    """Điểm bắt đầu vẽ theo NÉT MỰC đầu tiên, không theo origin của span đầu.
+
+    Bản gốc hay căn chữ bằng dãy space thay vì thuộc tính căn lề. Space có advance nhưng
+    không vẽ gì, nên origin của span đầu nằm ở đầu dãy space, còn chữ thật bắt đầu xa hơn
+    về bên phải — đo được tới 151pt trên một ô bảng thông số. `tokenize` bỏ mọi token
+    khoảng trắng (kể cả nbsp và các space Unicode khác), nên bản dịch không tái tạo được
+    dãy đó và bị kéo tụt về đầu dãy space.
+
+    Cùng lớp lỗi 1.8.0 đã sửa một nửa: hồi đó cho `build_lines` đo `ink_bbox` để khung ô
+    thôi phình ra vì space đầu/đuôi — nhưng `base_x` vẫn lấy từ origin có đệm.
+
+    Guard: CHỈ nâng base_x cho region một dòng, hoặc region mà mọi dòng bắt đầu ở cùng một
+    x (±1pt). Văn xuôi nhiều dòng có thụt lề dòng đầu — kiểu danh sách gạch đầu dòng — thì
+    dời `base_x` sẽ thụt cả khối, tức là đổi một lỗi lấy một lỗi. Chỉ nâng, không bao giờ
+    hạ: nét mực không thể nằm trái hơn origin.
+    """
+    lines = reg.get("lines") or []
+    if not lines:
+        return span_x
+    if len(lines) > 1:
+        lefts = [l["bbox"][0] for l in lines]
+        if max(lefts) - min(lefts) >= 1.0:
+            return span_x
+    return max(span_x, lines[0]["bbox"][0])
+
+
 HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")
 # Tựa được coi là "căn giữa theo trang" khi tâm chữ nguồn lệch tâm trang không quá ngần này.
 CENTERED_TOL_PT = 3.0
@@ -339,6 +366,7 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     # cả cw thì dòng gần đầy sẽ thò khỏi mép phải bằng chính phần thụt.
     # Center/right neo theo c[0]/c[2] nên bị chặn sẵn, giữ nguyên cw.
     base_x, base_y = reg["lines"][0]["spans"][0]["origin"]
+    base_x = ink_base_x(reg, base_x)
     wrap_w = cw
     if reg["rotation"] == 0 and reg["alignment"] == "left":
         wrap_w = max(c[2] - base_x, 1.0)

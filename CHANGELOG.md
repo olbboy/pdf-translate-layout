@@ -4,6 +4,55 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.6] - 2026-08-07
+
+### Fixed
+
+- **`base_x` now measures from the first inked glyph, not the first span's
+  origin.** Source documents often centre text with a *run of spaces* rather than
+  an alignment property. A space has advance width but paints nothing, so the
+  first span's origin sits at the start of the space run while the real text
+  begins further right. Real case, a V5 Series user manual: the `Pictures` header
+  cell has `container_x0 = 282.6` and `origin = 282.6`, but its ink starts at
+  `325.1`. `tokenize` drops every whitespace token — all 8 Unicode space
+  characters tested, including NBSP, fall through `expanded.strip()` — so the
+  translation cannot recreate that run and gets dragged back to the start of it.
+  Measured drift reached **151pt**, which pushed table header labels into the
+  neighbouring column (19 `G4_TABLE_RULE_CROSS` flags in that job alone).
+
+  This is the other half of a bug 1.8.0 fixed: back then `build_lines` was
+  switched to `ink_bbox` so cell boxes stopped inflating on leading/trailing
+  spaces, but `base_x` kept reading the padded origin.
+
+  Guard: the value is **only raised**, and only for single-line regions or
+  regions whose lines all start at the same x (±1pt). Multi-line prose with a
+  first-line indent — bulleted lists, for instance — would otherwise have the
+  whole block indented, trading one bug for another. It is never lowered: ink
+  cannot start left of the origin.
+
+  Measured over the 2 jobs holding a `regions.json` with affected regions: **36
+  regions change how they paint** (32 + 4, all `align=left`, guard passing); 47
+  `center/right` regions are also offset but **change nothing**, because their x
+  comes from the container rather than from `base_x`; 2 regions are correctly
+  held back by the guard. Bonus: bulleted-list indentation comes back in the
+  other job.
+
+### Not shipped
+
+- **Two alignment heuristics were tried and rejected** for contents-page rows
+  that carry their page number inside the same region. (a) "ink starting within
+  12pt of the container edge means left-aligned" changed 122 regions and broke
+  genuinely centred table cells (row numbers `1`, `2`, `3` in a narrow column sit
+  at lgap 8.2pt). (b) "a line filling ≥80% of its container means left-aligned"
+  changed 60 regions and broke short centred labels in snug cells
+  (`Grounding Cable` at 0.90, `Blink 3` at 0.82). Both trade one defect for
+  another. Those rows are really a **two-column-inside-one-region** problem,
+  which is what `column_split` (1.9.0) addresses — but it is gated to
+  `region_type == table_cell`, and widening it is a separate design job.
+
+  No `region_id`, `container` or translation change — existing jobs re-run
+  stages 6-7 only.
+
 ## [1.9.5] - 2026-08-07
 
 ### Fixed

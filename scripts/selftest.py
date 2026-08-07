@@ -817,6 +817,28 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── base_x theo nét mực, không theo origin có đệm space (1.9.6) ─────────
+# Bản gốc căn chữ bằng dãy space; space có advance nhưng không vẽ gì, còn tokenize thì bỏ
+# sạch token khoảng trắng — nên bản dịch bị kéo về đầu dãy space. Ca thật V5 Series: ô
+# "Pictures" có origin 282.6 trong khi nét mực bắt đầu ở 325.1.
+def _reg_lines(*bounds, span_x=0.0):
+    return {"lines": [{"bbox": [b, 0.0, b + 20.0, 10.0],
+                       "spans": [{"origin": [span_x, 8.0]}]} for b in bounds]}
+
+
+check("base_x: một dòng thì nâng lên đầu nét mực",
+      _fp.ink_base_x(_reg_lines(325.1, span_x=282.6), 282.6) == 325.1)
+check("base_x: không có đệm thì giữ nguyên",
+      _fp.ink_base_x(_reg_lines(45.7, span_x=45.7), 45.7) == 45.7)
+check("base_x: chỉ nâng, không bao giờ hạ",
+      _fp.ink_base_x(_reg_lines(40.0, span_x=45.7), 45.7) == 45.7)
+check("base_x: nhiều dòng cùng mép mực thì vẫn nâng",
+      _fp.ink_base_x(_reg_lines(187.0, 187.0, span_x=138.0), 138.0) == 187.0)
+check("base_x: nhiều dòng lệch mép (thụt dòng đầu) thì guard chặn",
+      _fp.ink_base_x(_reg_lines(60.0, 45.7, span_x=45.7), 45.7) == 45.7)
+check("base_x: region không có lines thì trả nguyên span_x",
+      _fp.ink_base_x({"lines": []}, 45.7) == 45.7)
+
 # ── Gate 3 nhánh keep: chữ còn hay mất, không phải thứ tự (1.9.5) ───────
 # Vùng keep engine không đụng tới, nên chuỗi trích xuất lệch thứ tự chỉ nói lên thứ tự đọc
 # của PDF chứ không nói mất chữ. Ca thật HV48100 manual p15: callout `1\n2` trích ra '2 1'
