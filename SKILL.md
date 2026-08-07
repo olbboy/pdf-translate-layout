@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.13"
+  version: "1.9.15"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.13 (engine `1.9.13`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.15 (engine `1.9.15`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -422,6 +422,26 @@ metadata:
 > run là đơn vị style, không phải đơn vị cột.
 > Kết quả V5 Series: trang mục lục 24/24 dòng đúng chỗ, số trang thẳng cột; vẽ **467 vùng,
 > bỏ 0**.
+> **1.9.14** khung nới được nhận khi nó bớt **DÒNG**, không chỉ khi nó tăng **cỡ chữ**.
+> 1.9.10 thêm nhánh "nguồn một dòng mà phải xuống dòng cũng là fit kém" để kích hoạt nới
+> khung, nhưng chốt nhận ở cuối vẫn là `got_s > keep_s` — mà bản dự phòng hai dòng đã ở cỡ
+> đầy nên cỡ chữ không thể lên nữa. Hai nhánh triệt tiêu nhau: khung nới tính đúng rồi vẫn
+> bị vứt đi. Ca thật V5 p17 `7.1 Unable to start` → `7.1 Không khởi động được` cần 157.0pt
+> trong khung 132.0pt, cả dải ngang bên phải trống.
+> **Kèm sửa một lỗi có sẵn:** vòng paint lọc bbox của chính region ra khỏi danh sách vật cản
+> bằng cách **ghi đè tại chỗ** `expand_ctx["obstacles"]`. Vật cản của mọi region đã xử lý vì
+> thế biến mất vĩnh viễn, và region cuối trang nhìn thấy một trang gần như trống — đủ điều
+> kiện nới khung đè lên chữ hàng xóm. Nay lọc ra bản sao cho từng region.
+> **1.9.15** `segment_indents` học hình mẫu thứ ba: số đoạn bản dịch bằng **số dòng mở
+> đoạn** của nguồn. Dòng mở đoạn = dòng đầu, cộng mọi dòng mà dòng TRƯỚC nó còn thừa chỗ cho
+> từ đầu của nó — nguồn xuống dòng vì hết chỗ thì dòng trước phải chạy sát mép phải, dừng
+> sớm hơn thế là cố ý ngắt đoạn. Bề rộng ký tự đo ngay trên dòng đang xét nên không cần font.
+> Hai hình mẫu của 1.9.11 đều đếm theo **mức thụt** nên trượt khi một mục bắt đầu ngay ở lề
+> thân bài; ca thật V5 p11 khối lưu kho có 12 dòng nguồn, 7 đoạn dịch, chỉ 6 dòng thụt sâu.
+> Thứ tự thử giữ nguyên: hai hình mẫu cũ đo trực tiếp mức thụt nên chắc hơn, hình mẫu mới
+> chỉ là bước dự phòng. Chặn thêm thụt lề vô lý (>25% bề rộng vùng) vì vùng hai cột khớp
+> đếm nhưng cho ra 268pt trên khung 366pt. Đo trên các job hiện có: 29 vùng trộn mức thụt,
+> suy được **10 → 19**.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

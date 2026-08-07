@@ -817,6 +817,44 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── nhận khung nới khi nó bớt DÒNG chứ không chỉ khi tăng cỡ chữ (1.9.14) ──
+# Ca thật V5 p17: `7.1 Unable to start` → `7.1 Không khởi động được` cần 157.0pt trong khung
+# 132.0pt. Bản dự phòng hai dòng đã ở cỡ đầy nên cỡ chữ không thể lên nữa; điều kiện cũ
+# `got_s > keep_s` luôn sai và khung nới tính đúng rồi vẫn bị vứt đi.
+_V5_MARGINS = (24.78, 398.99)   # lề thân bài đo trên chính job V5 Series
+_h71 = {"page": 16, "region_type": "heading", "rotation": 0, "alignment": "left",
+        "source_text": "7.1 Unable to start",
+        "bbox": [27.78, 38.3, 131.81, 55.48], "container": [27.78, 38.3, 159.82, 63.12],
+        "lines": [{"bbox": [27.78, 38.3, 131.81, 55.48],
+                   "spans": [{"origin": [27.78, 50.97], "text": "7.1 Unable to start",
+                              "size": 12.0}]}],
+        "runs": [{"text": "7.1 Unable to start", "bold": True, "italic": False,
+                  "serif": False, "mono": False, "size": 12.0, "color": 0,
+                  "font": "Arial-BoldMT", "role": "body"}],
+        "target_runs": [{"role": "body", "text": "7.1 Không khởi động được"}]}
+_fr71, _fi71 = _fp.fit_region(dict(_h71), _fp.FontPack(), _default_cfg,
+                              {"obstacles": [], "page_rect": _PAGE, "margins": _V5_MARGINS})
+check("nới khung: tiêu đề một dòng bị bẻ đôi được nới, giữ nguyên một dòng",
+      _fr71 is not None and len(_fr71["lines"]) == 1,
+      str(_fr71 and len(_fr71["lines"])))
+check("nới khung: bớt dòng ở cùng cỡ chữ vẫn tính là tốt hơn",
+      _fr71 is not None and abs(_fr71["size"] - 12.0) < 0.01
+      and any(c == "CONTAINER_EXPANDED" for c, _, _ in _fi71),
+      str([c for c, _, _ in _fi71]))
+# Không có chỗ nới (vật cản sát bên phải) thì vẫn bẻ đôi như cũ — luật phải có răng.
+_fr71b, _ = _fp.fit_region(dict(_h71), _fp.FontPack(), _default_cfg,
+                           {"obstacles": [[132.0, 30.0, 300.0, 60.0]],
+                            "page_rect": _PAGE, "margins": _V5_MARGINS})
+check("nới khung: bị chắn thì không nới, vẫn xuống dòng",
+      _fr71b is not None and len(_fr71b["lines"]) == 2, str(_fr71b and len(_fr71b["lines"])))
+
+# Vật cản của region đã xử lý không được biến mất khỏi danh sách dùng chung: lọc tại chỗ thì
+# region cuối trang thấy trang gần như trống và nới khung đè lên chữ hàng xóm.
+_fpsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "fit_paint.py"),
+              encoding="utf-8").read()
+check("nới khung: lọc vật cản ra bản sao, không ghi đè danh sách dùng chung",
+      'expand_ctx["obstacles"] =' not in _fpsrc)
+
 # ── dòng mục lục tách tiêu đề / số trang (1.9.13) ───────────────────────
 # Dòng mục lục là hai cột nằm trong một region; tokenize bỏ khe space nên cụm co lại rồi bị
 # căn giữa/phải, đè lên nét gạch dẫn.
@@ -907,6 +945,41 @@ check("thụt lề: không bao giờ âm — chữ dịch không vẽ trái hơn
       _fp.segment_indents(_rl(20.0, 40.0), 30.0, 2) == [0.0, 10.0])
 check("thụt lề: region một dòng không có gì để suy",
       _fp.segment_indents(_rl(36.0), 27.7, 1) == [0.0])
+
+# ── hình mẫu thứ ba: đếm dòng MỞ ĐOẠN (1.9.15) ─────────────────────────
+# Ca thật V5 p11 khối lưu kho: 12 dòng nguồn, 7 đoạn dịch, chỉ 6 dòng thụt sâu — hai hình
+# mẫu trên đều trượt vì một mục bắt đầu ngay ở lề thân bài. Dòng nào mà dòng TRƯỚC còn
+# thừa chỗ cho từ đầu của nó thì dòng đó mở đoạn: nguồn ngắt sớm là cố ý, không phải hết chỗ.
+def _pl(x0, x1, text):
+    return {"bbox": [x0, 0.0, x1, 10.0], "spans": [{"text": text}]}
+
+
+# mép phải chung = 397.1; dòng 0,1,3 dừng sớm → dòng sau mở đoạn; dòng 2 chạy sát mép → dòng
+# 3 là phần xuống dòng của nó... trừ khi chính nó dừng sớm.
+_mix = {"lines": [_pl(43.1, 206.3, "Relative humidity: 20%-80%, no condensation"),
+                  _pl(42.7, 102.9, "Altitude: <4000m"),
+                  _pl(29.8, 391.5, "For long-term storage, charge the LFP battery to more"),
+                  _pl(29.8, 325.1, "than 90% of its rated capacity"),
+                  _pl(43.1, 397.1, "Keep the SOC of the battery at 40%-60% during storage")]}
+check("thụt lề: suy được từ số dòng mở đoạn khi hai hình mẫu kia trượt",
+      _fp.segment_indents(_mix, 29.8, 4) == [13.3, 12.9, 0.0, 13.3],
+      str(_fp.segment_indents(_mix, 29.8, 4)))
+check("thụt lề: dòng chạy sát mép phải là dòng xuống dòng, không mở đoạn",
+      _fp.paragraph_starts(_mix["lines"]) == [0, 1, 2, 4],
+      str(_fp.paragraph_starts(_mix["lines"])))
+check("thụt lề: số dòng mở đoạn không khớp số đoạn thì vẫn trả 0",
+      _fp.segment_indents(_mix, 29.8, 2) == [0.0] * 2)
+# Vùng hai cột khớp đếm nhưng cho ra thụt lề 268pt trên khung 366pt — chặn lại.
+_wide = {"lines": [_pl(29.8, 120.0, "Note"),
+                   _pl(29.8, 395.9, "left column text runs all the way to the right edge"),
+                   _pl(29.8, 200.0, "continuation of that line"),
+                   _pl(298.2, 395.9, "right column")]}
+check("thụt lề: thụt vô lý (vùng hai cột) thì bỏ, không ném chữ ra giữa trang",
+      _fp.segment_indents(_wide, 29.8, 3) == [0.0] * 3,
+      str(_fp.segment_indents(_wide, 29.8, 3)))
+check("thụt lề: dòng không có span chữ thì không đoán",
+      _fp.paragraph_starts([{"bbox": [30.0, 0, 100.0, 10]},
+                            {"bbox": [40.0, 0, 90.0, 10]}]) is None)
 
 # ── căn lề đo bằng số dòng đồng thuận, không bằng biên độ (1.9.8) ───────
 # Biên độ max-min để MỘT dòng lạc quyết định cả khối. Ca thật V5 Series p15: 8 dòng cùng

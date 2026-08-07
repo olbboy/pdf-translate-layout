@@ -170,6 +170,37 @@ def ink_base_x(reg: dict, span_x: float) -> float:
     return max(span_x, min(l["bbox"][0] for l in lines))
 
 
+INDENT_MAX_FRAC = 0.25   # thụt lề suy ra không được quá ngần này bề rộng vùng
+
+
+def line_text(line: dict) -> str:
+    return "".join(s.get("text", "") for s in line.get("spans") or [])
+
+
+def paragraph_starts(lines: list[dict]) -> list[int] | None:
+    """Chỉ số các dòng MỞ ĐOẠN trong region, hoặc None nếu không đo được.
+
+    Luật: dòng đầu luôn mở đoạn; dòng i mở đoạn khi dòng i-1 còn thừa chỗ cho từ đầu của
+    dòng i. Nguồn xuống dòng vì hết chỗ thì dòng trước phải chạy sát mép phải — dừng sớm
+    hơn thế nghĩa là bản gốc cố ý ngắt đoạn.
+
+    Không cần font: bề rộng ký tự trung bình đo ngay trên dòng đang xét (bề rộng mực chia
+    số ký tự không-trắng), nên tự hiệu chỉnh theo cỡ chữ và font của chính vùng đó.
+    """
+    if not lines:
+        return None
+    right = max(l["bbox"][2] for l in lines)
+    starts = [0]
+    for i in range(1, len(lines)):
+        txt = line_text(lines[i]).strip()
+        if not txt:
+            return None                  # không có chữ để đo → không đoán
+        avg_cw = (lines[i]["bbox"][2] - lines[i]["bbox"][0]) / len(txt)
+        if right - lines[i - 1]["bbox"][2] >= avg_cw * (len(txt.split()[0]) + 1):
+            starts.append(i)
+    return starts
+
+
 def segment_indents(reg: dict, base_x: float, n_seg: int) -> list[float]:
     """Thụt lề (pt) cho từng đoạn ngăn bằng `\n` của bản dịch, hoặc toàn 0 nếu không suy ra được.
 
@@ -178,9 +209,12 @@ def segment_indents(reg: dict, base_x: float, n_seg: int) -> list[float]:
     trái nhất — chữ dịch chạy đè lên chính dấu gạch đầu dòng mà engine giữ lại.
 
     Ánh xạ chỉ xác định được khi số đoạn của bản dịch bằng **số dòng nguồn** (bản dịch giữ
-    nguyên cấu trúc dòng) hoặc bằng **số đoạn cùng mức thụt** của nguồn. Ngoài hai trường
-    hợp đó thì không có cách nào biết đoạn nào thuộc mức nào — trả về toàn 0, giữ nguyên
-    hành vi cũ. Đo trên 5 job: 48 vùng trộn mức thụt, **22 vùng suy ra được**.
+    nguyên cấu trúc dòng), bằng **số mục thụt sâu**, hoặc bằng **số dòng mở đoạn**
+    (`paragraph_starts`). Ngoài ba hình mẫu đó thì không có cách nào biết đoạn nào thuộc
+    mức nào — trả về toàn 0, giữ nguyên hành vi cũ. Thử theo đúng thứ tự này: hai hình mẫu
+    đầu đo trực tiếp mức thụt nên chắc hơn hình mẫu thứ ba (suy từ chỗ ngắt dòng).
+    Đo trên các job hiện có: 29 vùng trộn mức thụt, hình mẫu 1+2 suy được 10, thêm hình mẫu
+    3 thành **19**.
 
     Không bao giờ trả số âm: chữ dịch không được vẽ trái hơn `base_x`.
     """
@@ -198,6 +232,16 @@ def segment_indents(reg: dict, base_x: float, n_seg: int) -> list[float]:
     deep = [v for v in lv if v - lo >= 2.0]
     if deep and n_seg == len(deep) and max(deep) - min(deep) < 2.0:
         return [max(0.0, round(deep[0] - base_x, 2))] * n_seg
+    # Hình mẫu thứ ba: số đoạn bản dịch bằng số dòng MỞ ĐOẠN của nguồn. Hai hình mẫu trên
+    # đều đếm theo mức thụt nên trượt khi một mục bắt đầu ở lề thân bài (không thụt) — ca
+    # thật V5 p11 khối lưu kho: 12 dòng nguồn, 7 đoạn dịch, chỉ 6 dòng thụt sâu.
+    st = paragraph_starts(lines)
+    if st and len(st) == n_seg:
+        ind = [max(0.0, round(lines[i]["bbox"][0] - base_x, 2)) for i in st]
+        # Chặn thụt lề vô lý: vùng hai cột (nửa trái ngắn, nửa phải ở x lớn) khớp đếm nhưng
+        # cho ra 268pt trên khung 366pt. Thà không suy còn hơn ném đoạn văn sang giữa trang.
+        if max(ind) <= INDENT_MAX_FRAC * (max(l["bbox"][2] for l in lines) - base_x):
+            return ind
     return [0.0] * n_seg
 
 
@@ -605,9 +649,19 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             wrap_w = cw if align != "left" else max(c[2] - base_x, 1.0)
             avail_h = max(1.0, c[3] - base_y)
             got_best, got_s = run_search()
-            # Chỉ nhận khung nới khi nó thực sự tốt hơn — nới mà cỡ chữ không lên thì đừng
-            # đụng vào bố cục gốc.
-            if got_best is not None and (keep[5] is None or got_s > keep[6] + 0.01):
+            # Chỉ nhận khung nới khi nó thực sự tốt hơn — nới mà không được gì thì đừng đụng
+            # vào bố cục gốc. "Tốt hơn" có HAI dạng: cỡ chữ lớn hơn, hoặc ÍT DÒNG HƠN ở cùng
+            # cỡ chữ. Thiếu vế sau thì nhánh "nguồn một dòng bị bẻ đôi" ngay trên không bao
+            # giờ dùng được khung nới: bản dự phòng hai dòng đã ở cỡ đầy nên cỡ chữ không thể
+            # lên nữa, `got_s > keep[6]` luôn sai. Ca thật V5 p17 `7.1 Unable to start` →
+            # `7.1 Không khởi động được` cần 157.0pt trong khung 132.0pt, cả dải ngang bên
+            # phải trống, khung nới tính đúng rồi vẫn bị vứt đi.
+            better = got_best is not None and (
+                keep[5] is None
+                or got_s > keep[6] + 0.01
+                or (len(got_best["lines"]) < len(keep[5]["lines"])
+                    and got_s >= keep[6] - 0.01))
+            if better:
                 best, s_fit = got_best, got_s
                 issues.append(("CONTAINER_EXPANDED", "P2",
                                f"khung nới {old_w:.1f}→{cw:.1f}pt vào khoảng trống "
@@ -863,11 +917,16 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         regs = expanded
 
         for reg in regs:
+            ctx = expand_ctx
             if expand_ctx is not None:
-                # bbox của chính region không phải vật cản của nó
-                expand_ctx["obstacles"] = [b for b in expand_ctx["obstacles"]
-                                           if b is not reg["bbox"]]
-            fr, fissues = fit_region(reg, pack, cfg, expand_ctx)
+                # bbox của chính region không phải vật cản của nó — nhưng lọc ra BẢN SAO,
+                # không ghi đè danh sách gốc. Ghi đè thì vật cản của mọi region đã xử lý
+                # trước đó biến mất vĩnh viễn, và region cuối trang thấy trang gần như
+                # trống nên nới khung đè lên chữ của hàng xóm.
+                ctx = dict(expand_ctx,
+                           obstacles=[b for b in expand_ctx["obstacles"]
+                                      if b is not reg["bbox"]])
+            fr, fissues = fit_region(reg, pack, cfg, ctx)
             for code, sev, det in fissues:
                 issues.append(make_issue(code, sev, STAGE, det,
                                          page=pno, region_id=reg["region_id"]))

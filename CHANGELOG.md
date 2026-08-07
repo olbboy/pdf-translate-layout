@@ -4,6 +4,47 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.15] - 2026-08-07
+
+### Added
+
+- **`segment_indents` learned a third pattern**: the translation's paragraph
+  count matching the source's count of **paragraph-opening lines**. A line opens
+  a paragraph if it is the first one, or if the line *before* it still had room
+  for its first word — a source line that wraps must run to the right edge, so
+  stopping short of that is a deliberate break. Character width is measured on
+  the line itself (ink width over non-space characters), so no font metrics are
+  needed.
+
+  Both 1.9.11 patterns count by **indent level** and therefore miss a region
+  where one item starts flush at the body margin. Real case, V5 p11 storage
+  block: 12 source lines, 7 translated paragraphs, only 6 deep-indented lines.
+
+  Order of attempts is unchanged — the two older patterns measure indent
+  directly and are the more reliable, so the new one runs last. An extra guard
+  rejects an implausible indent (>25% of region width): a two-column region
+  matches on count but yields 268pt on a 366pt box. Across the jobs on hand: 29
+  regions with mixed indent, inferable **10 → 19**.
+
+## [1.9.14] - 2026-08-07
+
+### Fixed
+
+- **An expanded container is now accepted when it saves a LINE, not only when it
+  raises the FONT SIZE.** 1.9.10 added the "a one-line source forced to wrap is
+  also a poor fit" branch to trigger container expansion, but the acceptance test
+  at the end was still `got_s > keep_s` — and the two-line fallback already sits
+  at full size, so the size can never go up. The two branches cancelled out and a
+  correctly computed container was thrown away. Real case, V5 p17:
+  `7.1 Unable to start` → `7.1 Không khởi động được` needs 157.0pt in a 132.0pt
+  box with the whole band to its right empty.
+
+- **A pre-existing bug in the paint loop**: it removed the region's own bbox from
+  the obstacle list by **assigning over** `expand_ctx["obstacles"]` in place. Every
+  already-processed region's obstacle therefore disappeared for good, so a region
+  near the end of a page saw an almost empty page and could expand over its
+  neighbours' text. The filter now produces a per-region copy.
+
 ## [1.9.13] - 2026-08-07
 
 ### Added
