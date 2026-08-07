@@ -297,7 +297,66 @@ def build_runs(all_spans: list) -> list:
     return runs
 
 
+SUP_MAX_CHARS = 6      # ký hiệu mũ dài hơn ngần này thì không phải chú thích
+SUP_SIZE_FRAC = 0.75   # và cỡ chữ phải nhỏ hơn ngần này lần cỡ thân vùng
+
+
+def fold_superscripts(lines: list) -> list:
+    """Gộp dòng chỉ chứa ký hiệu mũ vào dòng mà nó viết nối tiếp.
+
+    Vì sao cần: baseline của ký hiệu mũ cao hơn dòng thân nên PDF khai nó thành MỘT "line"
+    riêng. Ca thật V5 p6, ô `Recommended Charge/ Discharge Current [1]` ra ba "dòng" với
+    `[1]` nằm giữa: `source_text` thành ba đoạn, model dịch đúng ba đoạn theo hợp đồng, và
+    bản vẽ đặt `[1]` thành một dòng riêng lơ lửng giữa hai dòng chữ.
+
+    Chủ của ký hiệu là dòng kết thúc NGAY TRƯỚC nó theo chiều ngang và có baseline trong
+    khoảng một dòng — tức dòng mà mắt người đọc thấy ký hiệu bám vào. Không tìm được chủ thì
+    để nguyên: thà giữ dòng riêng còn hơn dán nhầm chỗ.
+    """
+    if len(lines) < 2:
+        return lines
+    sizes = [s["size"] for l in lines for s in l["spans"] for _ in s["text"]]
+    if not sizes:
+        return lines
+    med = statistics.median(sizes)
+
+    def is_sup(l):
+        t = "".join(s["text"] for s in l["spans"]).strip()
+        return (0 < len(t) <= SUP_MAX_CHARS and l["spans"]
+                and max(s["size"] for s in l["spans"]) < SUP_SIZE_FRAC * med)
+
+    def base_y(l):
+        return l["spans"][0]["origin"][1]
+
+    sup = {i for i, l in enumerate(lines) if is_sup(l)}
+    if not sup or len(sup) == len(lines):
+        return lines
+    host_of: dict[int, int] = {}
+    for i in sorted(sup):
+        # Ký hiệu mũ được NÂNG lên, nên baseline của chủ luôn nằm THẤP HƠN nó một chút —
+        # chưa tới một dòng. Không có vế này thì `[3]` của `Cycle Life` có thể dán ngược lên
+        # `DC Breaker` ở hàng trên, vốn cách nó 16.5pt phía trên.
+        cands = [j for j, l in enumerate(lines)
+                 if j not in sup and l["bbox"][2] <= lines[i]["bbox"][0] + 1.0
+                 and 0.0 <= base_y(l) - base_y(lines[i]) <= med]
+        if cands:
+            host_of[i] = min(cands, key=lambda j: base_y(lines[j]) - base_y(lines[i]))
+    if not host_of:
+        return lines
+    out = []
+    for j, l in enumerate(lines):
+        if j in host_of:
+            continue
+        adds = [lines[i] for i, h in host_of.items() if h == j]
+        if adds:
+            l = {**l, "spans": l["spans"] + [s for a in adds for s in a["spans"]],
+                 "bbox": union([l["bbox"]] + [a["bbox"] for a in adds])}
+        out.append(l)
+    return out
+
+
 def make_region(page_no: int, rtype: str, lines: list, confidence: float) -> dict:
+    lines = fold_superscripts(lines)
     spans = [s for l in lines for s in l["spans"]]
     text = "\n".join("".join(s["text"] for s in l["spans"]) for l in lines)
     d = lines[0]["dir"]

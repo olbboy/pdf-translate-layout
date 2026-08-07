@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.21] - 2026-08-07
+
+### Fixed
+
+- **A superscript is folded into the line it belongs to.** Its baseline sits
+  above the body line, so the PDF reports it as a **line of its own**: the cell
+  `Recommended Charge/ Discharge Current [1]` comes out as three "lines" with
+  `[1]` in the middle, `source_text` becomes three segments, the model dutifully
+  translates three segments, and the painter puts `[1]` on a line of its own
+  floating between two lines of text. The host is the line that ends immediately
+  to its left **and** whose baseline sits *below* it by less than a line — a
+  superscript is raised, and without that second condition the `[3]` belonging to
+  `Cycle Life` gets stuck onto `DC Breaker` in the row above. No host found means
+  no fold. Across the jobs on hand: exactly 4 regions, all on V5 p6.
+
+## [1.9.20] - 2026-08-07
+
+### Fixed
+
+- **Each translated paragraph is anchored to its source paragraph's baseline.**
+  The `•` `◇` `∘` marks are not part of the region — they are separate glyphs
+  pinned to the source baselines and never redacted. The fitter lays lines out
+  continuously from `base_y`, so paragraph *i* only lands on its own mark when
+  every paragraph before it occupies exactly as many lines as the source did, and
+  Vietnamese rarely breaks the same way English does. Real case, V5 p12 §5.2: 6
+  source lines and 3 `◇` items against 3 translated paragraphs — the count
+  already matched — but paragraph 1 took 3 lines instead of 4, so the last `◇`
+  ended up beside nothing. Rewriting the translation cannot fix this: it would
+  mean forcing each paragraph to a line count, which is not translating.
+
+  The rule: a paragraph's first line drops to its source baseline but **never
+  moves above the previous line** — `max(anchor, previous + leading)`. Thanks to
+  the `max`, a paragraph that runs longer than its source simply flows on instead
+  of colliding. The fitter measures its vertical budget with the very same
+  baseline formula the painter uses.
+
+  `segment_indents` and `segment_anchors` now share `segment_source_lines`:
+  indent and anchor have to describe the same structure, or each reads the region
+  its own way.
+
 ## [1.9.19] - 2026-08-07
 
 ### Fixed

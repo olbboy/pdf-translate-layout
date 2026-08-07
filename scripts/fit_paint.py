@@ -218,31 +218,88 @@ def segment_indents(reg: dict, base_x: float, n_seg: int) -> list[float]:
 
     Không bao giờ trả số âm: chữ dịch không được vẽ trái hơn `base_x`.
     """
+    got = segment_source_lines(reg, n_seg)
+    if not got:
+        return [0.0] * max(1, n_seg)
+    idx, pattern = got
+    lines = reg["lines"]
+    ind = [max(0.0, round(lines[i]["bbox"][0] - base_x, 2)) for i in idx]
+    # Chặn thụt lề vô lý: vùng hai cột (nửa trái ngắn, nửa phải ở x lớn) khớp đếm theo hình
+    # mẫu 3 nhưng cho ra 268pt trên khung 366pt. Thà không suy còn hơn ném đoạn ra giữa
+    # trang. Hai hình mẫu đầu đo trực tiếp mức thụt nên không cần chốt này.
+    if pattern == 3 and max(ind) > INDENT_MAX_FRAC * (
+            max(l["bbox"][2] for l in lines) - base_x):
+        return [0.0] * n_seg
+    return ind
+
+
+def segment_anchors(reg: dict, n_seg: int) -> list[float] | None:
+    """Baseline nguồn của từng đoạn bản dịch, hoặc None nếu không suy được ánh xạ.
+
+    Vì sao cần: dấu `•` `◇` `∘` KHÔNG nằm trong region — chúng là glyph riêng, neo cứng ở
+    baseline của nguồn và không bị redact. Fitter thì rải dòng liên tục từ `base_y` với
+    leading cố định, nên đoạn thứ i chỉ rơi đúng dấu của nó khi mọi đoạn trước đó chiếm đúng
+    số dòng như nguồn. Tiếng Việt hiếm khi chia dòng y hệt tiếng Anh, nên cả khối lệch pha.
+    Ca thật V5 p12 §5.2: nguồn 6 dòng / 3 mục `◇`, bản dịch 3 đoạn — ĐẾM ĐÃ KHỚP — nhưng
+    đoạn 1 chỉ chiếm 3 dòng thay vì 4, thế là `◇` cuối rơi vào chỗ trống.
+    """
+    got = segment_source_lines(reg, n_seg)
+    if not got:
+        return None
+    return [reg["lines"][i]["spans"][0]["origin"][1] for i in got[0]]
+
+
+def line_baselines(line_seg: list, base_y: float, leading: float,
+                   anchors: list | None) -> list[float]:
+    """Baseline từng dòng đã fit. Không có `anchors` thì rải liên tục như cũ.
+
+    Luật neo: dòng MỞ ĐOẠN tụt xuống baseline nguồn của đoạn đó, nhưng không bao giờ lùi lên
+    trên dòng trước — `max(neo, trước + leading)`. Nhờ vế `max`, đoạn dịch dài hơn nguồn thì
+    tự động chảy tiếp như cũ thay vì đè lên nhau; đoạn ngắn hơn thì phần dôi ra thành khoảng
+    trắng đúng chỗ bản gốc có.
+    """
+    ys, prev_si = [], None
+    for li, si in enumerate(line_seg):
+        if li == 0:
+            y = base_y
+        elif anchors and si != prev_si and si < len(anchors):
+            y = max(anchors[si], ys[-1] + leading)
+        else:
+            y = ys[-1] + leading
+        ys.append(y)
+        prev_si = si
+    return ys
+
+
+def segment_source_lines(reg: dict, n_seg: int) -> tuple[list[int], int] | None:
+    """→ (dòng nguồn tương ứng với từng đoạn bản dịch, số hiệu hình mẫu), hoặc None.
+
+    Thụt lề và neo baseline phải dùng CHUNG một ánh xạ, nếu không hai thứ nói về hai cấu
+    trúc khác nhau trên cùng một vùng.
+
+    Ba hình mẫu, thử đúng thứ tự này — hai cái đầu đo trực tiếp mức thụt nên chắc hơn:
+    (1) số đoạn bằng số dòng nguồn: bản dịch giữ nguyên cấu trúc dòng, ánh xạ 1:1;
+    (2) số đoạn bằng số mục thụt sâu, và các mục ấy cùng một mức;
+    (3) số đoạn bằng số dòng MỞ ĐOẠN (`paragraph_starts`) — bắt được ca có mục bắt đầu ngay
+        ở lề thân bài, thứ mà hai hình mẫu đếm-mức-thụt luôn trượt.
+    """
     lines = reg.get("lines") or []
     if len(lines) < 2 or n_seg < 1:
-        return [0.0] * max(1, n_seg)
+        return None
     lv = [l["bbox"][0] for l in lines]
     if n_seg == len(lv):
-        # Bản dịch giữ nguyên cấu trúc dòng → ánh xạ 1:1, chính xác nhất.
-        return [max(0.0, round(v - base_x, 2)) for v in lv]
-    # Ngược lại chỉ nhận đúng một hình mẫu: hai mức thụt, mỗi đoạn bản dịch là một mục thụt
-    # vào. Không dùng "đoạn cùng mức" vì hai mục gạch đầu dòng liền nhau cùng mức bị gộp làm
-    # một, cho ra kết quả nham nhở — mục thụt, mục không.
+        return list(range(len(lv))), 1
     lo = min(lv)
-    deep = [v for v in lv if v - lo >= 2.0]
-    if deep and n_seg == len(deep) and max(deep) - min(deep) < 2.0:
-        return [max(0.0, round(deep[0] - base_x, 2))] * n_seg
-    # Hình mẫu thứ ba: số đoạn bản dịch bằng số dòng MỞ ĐOẠN của nguồn. Hai hình mẫu trên
-    # đều đếm theo mức thụt nên trượt khi một mục bắt đầu ở lề thân bài (không thụt) — ca
-    # thật V5 p11 khối lưu kho: 12 dòng nguồn, 7 đoạn dịch, chỉ 6 dòng thụt sâu.
+    # Không dùng "đoạn cùng mức" vì hai mục gạch đầu dòng liền nhau cùng mức bị gộp làm một,
+    # cho ra kết quả nham nhở — mục thụt, mục không.
+    deep = [i for i, v in enumerate(lv) if v - lo >= 2.0]
+    if deep and n_seg == len(deep) \
+            and max(lv[i] for i in deep) - min(lv[i] for i in deep) < 2.0:
+        return deep, 2
     st = paragraph_starts(lines)
     if st and len(st) == n_seg:
-        ind = [max(0.0, round(lines[i]["bbox"][0] - base_x, 2)) for i in st]
-        # Chặn thụt lề vô lý: vùng hai cột (nửa trái ngắn, nửa phải ở x lớn) khớp đếm nhưng
-        # cho ra 268pt trên khung 366pt. Thà không suy còn hơn ném đoạn văn sang giữa trang.
-        if max(ind) <= INDENT_MAX_FRAC * (max(l["bbox"][2] for l in lines) - base_x):
-            return ind
-    return [0.0] * n_seg
+        return st, 3
+    return None
 
 
 HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")
@@ -623,6 +680,9 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     n_seg = 1 + sum(1 for t in tokens[1:] if t.get("br"))
     seg_ind = (segment_indents(reg, base_x, n_seg)
                if reg["rotation"] == 0 and reg["alignment"] == "left" else [0.0] * n_seg)
+    anchors = (segment_anchors(reg, n_seg)
+               if reg["rotation"] == 0 and n_seg > 1
+               and cfg.get("layout", {}).get("paragraph_anchor", True) else None)
 
     def layout_at(s: float, cap_one_line: bool = False):
         widths = [pack.font(k).text_length(t["text"], fontsize=s)
@@ -659,7 +719,11 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             return None
         if single_line_src and n > max_lines:
             return None
-        if (n - 1) * leading_ratio * s > budget:
+        # Đo bằng CHÍNH công thức baseline mà bước vẽ dùng: neo đoạn có thể đẩy dòng cuối
+        # xuống thấp hơn cách rải liên tục, fitter phải thấy đúng phần đó chứ không được đo
+        # một đằng vẽ một nẻo.
+        ys = line_baselines(line_seg, base_y, leading_ratio * s, anchors)
+        if ys[-1] - base_y > budget:
             return None
         return {"lines": lines, "widths": widths, "space_ws": space_ws,
                 "line_seg": line_seg}
@@ -747,6 +811,8 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
 
     # dựng line segments với alignment + sub-run theo font
     leading = leading_ratio * s_fit
+    baselines = line_baselines(best.get("line_seg") or [0] * len(best["lines"]),
+                               base_y, leading, anchors)
     out_lines = []
     for li, idxs in enumerate(best["lines"]):
         # Bề rộng dòng = tổng token + các khe THẬT giữa chúng (khe sau token idxs[k]).
@@ -763,7 +829,7 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
                 if li < len(seg_of) and seg_of[li] < len(seg_ind):
                     ind = seg_ind[seg_of[li]]
             x = base_x + ind
-        y = base_y + li * leading
+        y = baselines[li]
         segs, cx = [], x
         cur = None
         for pos, i in enumerate(idxs):

@@ -1023,6 +1023,31 @@ _wide = {"lines": [_pl(29.8, 120.0, "Note"),
 check("thụt lề: thụt vô lý (vùng hai cột) thì bỏ, không ném chữ ra giữa trang",
       _fp.segment_indents(_wide, 29.8, 3) == [0.0] * 3,
       str(_fp.segment_indents(_wide, 29.8, 3)))
+# ── neo baseline theo đoạn (1.9.20) ────────────────────────────────────
+# Dấu `•` `◇` `∘` là glyph riêng, neo cứng ở baseline nguồn. Fitter rải dòng liên tục nên
+# đoạn i chỉ rơi đúng dấu của nó khi mọi đoạn trước chiếm đúng số dòng như nguồn.
+check("neo: không có anchors thì rải liên tục như cũ",
+      _fp.line_baselines([0, 0, 1], 100.0, 10.0, None) == [100.0, 110.0, 120.0])
+# Đoạn 0 dịch ngắn hơn nguồn (1 dòng thay vì 2) → đoạn 1 vẫn phải rơi đúng baseline nguồn.
+check("neo: đoạn dịch ngắn hơn thì đoạn sau tụt về đúng baseline nguồn",
+      _fp.line_baselines([0, 1], 100.0, 10.0, [100.0, 120.0]) == [100.0, 120.0])
+# Đoạn 0 dịch dài hơn nguồn → không được đè lên nhau, chảy tiếp như cũ.
+check("neo: đoạn dịch dài hơn thì chảy tiếp, không đè",
+      _fp.line_baselines([0, 0, 0, 1], 100.0, 10.0, [100.0, 120.0]) == [100.0, 110.0, 120.0, 130.0])
+check("neo: neo không bao giờ kéo dòng lên trên dòng trước",
+      _fp.line_baselines([0, 0, 1], 100.0, 10.0, [100.0, 105.0]) == [100.0, 110.0, 120.0])
+_anch = {"lines": [{"bbox": [36.0, 0, 100.0, 10], "spans": [{"origin": [36.0, 100.0]}]},
+                   {"bbox": [27.7, 0, 100.0, 10], "spans": [{"origin": [27.7, 113.0]}]},
+                   {"bbox": [36.0, 0, 100.0, 10], "spans": [{"origin": [36.0, 126.0]}]}]}
+check("neo: baseline lấy từ đúng dòng nguồn của mỗi đoạn",
+      _fp.segment_anchors(_anch, 3) == [100.0, 113.0, 126.0],
+      str(_fp.segment_anchors(_anch, 3)))
+check("neo: không suy được ánh xạ thì không neo",
+      _fp.segment_anchors(_anch, 4) is None)
+# Thụt lề và neo PHẢI dùng chung ánh xạ, nếu không hai thứ nói về hai cấu trúc khác nhau.
+check("neo: dùng chung ánh xạ với thụt lề",
+      _fp.segment_source_lines(_anch, 3)[0] == [0, 1, 2])
+
 check("thụt lề: dòng không có span chữ thì không đoán",
       _fp.paragraph_starts([{"bbox": [30.0, 0, 100.0, 10]},
                             {"bbox": [40.0, 0, 90.0, 10]}]) is None)
@@ -1107,6 +1132,43 @@ _toC = [_cell("center", 29.9, 217.0, ink=100.0) for _ in range(5)] \
     + [_cell("left", 29.9, 217.0, ink=100.0)]
 check("căn lề cột: đổi sang center thì không cần chốt mực",
       _eg.column_consensus(_toC) == 1 and _toC[5]["alignment"] == "center")
+# ── gộp ký hiệu mũ vào dòng chủ (1.9.21) ───────────────────────────────
+# Baseline ký hiệu mũ cao hơn dòng thân nên PDF khai nó thành một "line" riêng: source_text
+# thành ba đoạn và bản vẽ đặt `[1]` lơ lửng giữa hai dòng chữ. Ca thật V5 p6.
+def _sline(x0, x1, oy, text, size=8.0):
+    return {"bbox": [x0, oy - 8.0, x1, oy + 2.0],
+            "spans": [{"text": text, "size": size, "origin": [x0, oy]}]}
+
+
+_sup = [_sline(31.7, 116.6, 224.5, "Recommended Charge/"),
+        _sline(98.9, 103.8, 230.6, "[1]", 4.0),
+        _sline(31.7, 96.6, 235.5, "Discharge Current ")]
+_folded = _eg.fold_superscripts(_sup)
+check("ký hiệu mũ: gộp vào dòng chủ, không còn dòng riêng",
+      len(_folded) == 2 and "".join(s["text"] for s in _folded[1]["spans"])
+      == "Discharge Current [1]", str([[s["text"] for s in l["spans"]] for l in _folded]))
+check("ký hiệu mũ: bbox dòng chủ nới ra bao ký hiệu",
+      abs(_folded[1]["bbox"][2] - 103.8) < 0.01, str(_folded[1]["bbox"]))
+# Ký hiệu mũ được NÂNG lên: chủ luôn ở baseline THẤP HƠN nó. `[3]` của `Cycle Life` không
+# được dán ngược lên `DC Breaker` ở hàng trên, dù hàng đó cũng kết thúc trước nó.
+_two_rows = [_sline(31.7, 66.0, 373.0, "DC Breaker"),
+             _sline(68.2, 73.0, 383.7, "[3]", 4.0),
+             _sline(31.7, 68.7, 388.7, "Cycle Life")]
+_f2 = _eg.fold_superscripts(_two_rows)
+check("ký hiệu mũ: không dán ngược lên hàng trên",
+      len(_f2) == 2 and "".join(s["text"] for s in _f2[1]["spans"]) == "Cycle Life[3]",
+      str([[s["text"] for s in l["spans"]] for l in _f2]))
+# Không có dòng nào kết thúc trước nó ở đúng tầm baseline → để nguyên, thà giữ dòng riêng.
+check("ký hiệu mũ: không tìm được chủ thì để nguyên",
+      len(_eg.fold_superscripts([_sline(31.7, 36.5, 224.5, "[1]", 4.0),
+                                 _sline(60.0, 120.0, 260.0, "Something else")])) == 2)
+check("ký hiệu mũ: chữ thường cỡ bình thường không bị gộp",
+      len(_eg.fold_superscripts(_sup[:1] + [_sline(98.9, 118.0, 230.6, "ABC")])) == 2)
+check("ký hiệu mũ: make_region thật sự gộp trước khi dựng source_text",
+      "lines = fold_superscripts(lines)" in open(
+          os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),
+          encoding="utf-8").read())
+
 check("căn lề cột: stage 2 thật sự gọi đồng thuận sau khi gán alignment",
       "column_consensus(ordered)" in open(
           os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),

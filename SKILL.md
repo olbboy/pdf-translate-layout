@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.19"
+  version: "1.9.21"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.19 (engine `1.9.19`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.21 (engine `1.9.21`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -478,6 +478,26 @@ metadata:
 > kín nên bị đọc nhầm thành `left` và thắng phiếu 5/6; ô `ON` căn giữa THẬT bị kéo theo,
 > `Sáng` còn 16.4pt để wrap → `FIT_IMPOSSIBLE`. Chỉ chặn chiều sang `left`; `center`/`right`
 > neo vào khung nên không tốn ngân sách.
+> **1.9.20** **neo baseline theo đoạn**. Dấu `•` `◇` `∘` KHÔNG nằm trong region — chúng là
+> glyph riêng, neo cứng ở baseline nguồn và không bị redact. Fitter thì rải dòng liên tục từ
+> `base_y`, nên đoạn thứ i chỉ rơi đúng dấu của nó khi mọi đoạn trước chiếm ĐÚNG số dòng như
+> nguồn — tiếng Việt hiếm khi chia dòng y hệt tiếng Anh nên cả khối lệch pha. Ca thật V5 p12
+> §5.2: nguồn 6 dòng / 3 mục `◇`, bản dịch 3 đoạn — đếm đã khớp — nhưng đoạn 1 chiếm 3 dòng
+> thay vì 4, thế là `◇` cuối rơi vào chỗ trống. Đã chứng minh sửa bản dịch không giải được:
+> phải ép từng đoạn xuống đúng số dòng nguồn, tức gò câu theo số dòng chứ không phải dịch.
+> Luật neo: dòng mở đoạn tụt xuống baseline nguồn của đoạn đó, nhưng **không bao giờ lùi lên
+> trên dòng trước** — `max(neo, trước + leading)`. Nhờ vế `max`, đoạn dịch dài hơn nguồn tự
+> động chảy tiếp thay vì đè lên nhau. Fitter đo ngân sách dọc bằng CHÍNH công thức baseline
+> mà bước vẽ dùng, không đo một đằng vẽ một nẻo.
+> Kèm gộp `segment_indents` và `segment_anchors` về chung `segment_source_lines`: thụt lề và
+> neo phải nói về cùng một cấu trúc, nếu không mỗi thứ hiểu vùng một kiểu.
+> **1.9.21** gộp **ký hiệu mũ** vào dòng chủ. Baseline ký hiệu mũ cao hơn dòng thân nên PDF
+> khai nó thành MỘT "line" riêng: ô `Recommended Charge/ Discharge Current [1]` ra ba "dòng"
+> với `[1]` nằm giữa, `source_text` thành ba đoạn, model dịch đúng ba đoạn theo hợp đồng, và
+> bản vẽ đặt `[1]` thành một dòng lơ lửng giữa hai dòng chữ. Chủ của ký hiệu là dòng kết thúc
+> ngay trước nó theo chiều ngang VÀ có baseline **thấp hơn** nó chưa tới một dòng — ký hiệu mũ
+> được nâng lên, nên thiếu vế sau thì `[3]` của `Cycle Life` dán ngược lên `DC Breaker` ở hàng
+> trên. Không tìm được chủ thì để nguyên. Đo trên các job: đúng 4 vùng, đều ở V5 p6.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
