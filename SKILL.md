@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.24"
+  version: "1.9.25"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.24 (engine `1.9.24`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.25 (engine `1.9.25`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -541,6 +541,22 @@ metadata:
 > base_x.
 > **Lỗi này gate không thấy** — P0/P1/P2 không đổi trước và sau. Nó lộ ra ở **bản so sánh
 > nguồn ↔ bản dịch** mà người duyệt xem trước khi approve.
+> **1.9.25** **dấu gạch đầu dòng** trở thành hình mẫu ánh xạ đoạn ưu tiên số một. `•` `◇`
+> `∘` của bản gốc là HÌNH VẼ nhỏ chứ không phải ký tự, nên không nằm trong `lines` của
+> region — nhưng chúng là bằng chứng chắc nhất về cấu trúc mục: mỗi dấu một mục, không phải
+> suy đoán. Ba hình mẫu của 1.9.11/1.9.15 đều suy từ hình học chữ và sai ở đúng những nguồn
+> ngắt dòng cứng giữa câu. `bullet_lines` (stage 2, metadata thuần như `fill_rules`) ghi lại
+> dòng nào được một dấu đánh dấu; phần đầu vùng chưa có dấu vẫn nhờ `paragraph_starts` chia.
+> Chữ ký: nét nhỏ dưới 8pt mỗi chiều, trong 30pt kể từ mép trái vùng, tâm nằm trên baseline
+> dòng nó đánh chưa tới 7pt, và **nằm ngoài vệt mực mọi dòng** — chồng lên chữ thì đó là ký
+> hiệu trong câu hay nét của hình minh hoạ.
+> Đo trên các job: 18 vùng có dấu. Nơi số mục khớp số đoạn dịch — **9 vùng trùng đúng ba
+> hình mẫu cũ, 3 vùng ba hình mẫu cũ chịu thua, 0 vùng mâu thuẫn**. Thuần bổ sung: không
+> khớp thì lùi về ba hình mẫu cũ, không ép bừa.
+> Kết quả HV48100: 15/15 vùng có dấu nay ánh xạ theo dấu. Khối `CAUTION` p19 — thứ 1.9.20
+> tuyên bố "không giải được bằng engine" — nay đúng cả 9 mục, kể cả mục `Relative humidity`
+> mà `paragraph_starts` bỏ sót. Kết luận cũ sai vì tôi chỉ tìm tín hiệu trong chữ, còn tín
+> hiệu thật thì bản gốc đã vẽ sẵn ra.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

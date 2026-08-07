@@ -295,6 +295,17 @@ def segment_source_lines(reg: dict, n_seg: int) -> tuple[list[int], int] | None:
     if len(lines) < 2 or n_seg < 1:
         return None
     lv = [l["bbox"][0] for l in lines]
+    # Hình mẫu 0 — DẤU GẠCH ĐẦU DÒNG, ưu tiên trên hết. Ba hình mẫu dưới đều SUY từ hình học
+    # chữ; dấu thì được bản gốc vẽ ra, mỗi dấu một mục, không phải suy đoán. Phần đầu vùng
+    # chưa có dấu (tiêu đề, đoạn dẫn) vẫn nhờ `paragraph_starts` chia.
+    # Đo trên các job: nơi số mục khớp số đoạn dịch — 9 vùng trùng đúng ba hình mẫu cũ,
+    # 3 vùng ba hình mẫu cũ chịu thua, **0 vùng mâu thuẫn**. Thuần bổ sung.
+    bl = reg.get("bullet_lines")
+    if bl:
+        pre = [i for i in (paragraph_starts(lines) or []) if i < bl[0]]
+        idx = sorted(set(pre) | set(bl))
+        if len(idx) == n_seg:
+            return idx, 0
     if n_seg == len(lv):
         return list(range(len(lv))), 1
     lo = min(lv)

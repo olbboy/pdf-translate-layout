@@ -194,6 +194,47 @@ def infer_alignment(lines: list, container: list) -> str:
     return "left"
 
 
+MARK_MAX_PT = 8.0     # dấu gạch đầu dòng nhỏ hơn ngần này mỗi chiều
+MARK_BAND_PT = 30.0   # và nằm trong ngần này kể từ mép trái vùng
+MARK_LIFT_PT = 7.0    # tâm dấu nằm TRÊN baseline dòng nó đánh, không quá ngần này
+
+
+def bullet_lines(reg: dict, drawings: list) -> list[int]:
+    """Chỉ số các dòng được một dấu gạch đầu dòng đánh dấu.
+
+    Vì sao cần: dấu `•` `◇` `∘` của bản gốc là **hình vẽ nhỏ**, không phải ký tự, nên không
+    nằm trong `lines` của region. Chúng lại là bằng chứng CHẮC NHẤT về cấu trúc mục: mỗi dấu
+    là một mục, không phải suy đoán. `paragraph_starts` chỉ đoán từ chỗ ngắt dòng và sai ở
+    đúng những nguồn ngắt dòng cứng giữa câu — ca thật HV48100 p19 khối `CAUTION`: nó bỏ sót
+    mục `Relative humidity` và nhận nhầm hai dòng nối tiếp thành mục mới, còn dãy dấu thì
+    đếm đúng 9 mục.
+
+    Dấu phải nằm ngoài vệt mực của mọi dòng — nếu chồng lên chữ thì đó là hình minh hoạ hay
+    ký hiệu trong câu, không phải dấu gạch đầu dòng.
+
+    Đo trên các job: 18 vùng có dấu; nơi số mục khớp số đoạn dịch thì **9 vùng trùng đúng
+    luật cũ, 3 vùng luật cũ chịu thua, 0 vùng mâu thuẫn**.
+    """
+    b, ink = reg["bbox"], [l["bbox"] for l in reg["lines"]]
+    base = [l["spans"][0]["origin"][1] for l in reg["lines"]]
+    hit: set[int] = set()
+    for d in drawings:
+        r = d["rect"] if isinstance(d, dict) else pymupdf.Rect(d)
+        if r.width > MARK_MAX_PT or r.height > MARK_MAX_PT:
+            continue
+        if not b[0] - 2 <= r.x0 <= b[0] + MARK_BAND_PT:
+            continue
+        cy = (r.y0 + r.y1) / 2
+        if not b[1] - 4 <= cy <= b[3] + 4:
+            continue
+        if any(i[0] - 1 <= r.x0 <= i[2] and i[1] <= cy <= i[3] for i in ink):
+            continue
+        cand = [i for i, y in enumerate(base) if 0 <= y - cy <= MARK_LIFT_PT]
+        if cand:
+            hit.add(min(cand, key=lambda i: base[i] - cy))
+    return sorted(hit)
+
+
 COLUMN_MIN_CELLS = 4      # cột phải có ngần này ô một dòng mới đủ làm bằng chứng
 COLUMN_MIN_AGREE = 0.75   # và ngần này phần đồng thuận
 
@@ -686,6 +727,7 @@ def extract(job: Job) -> None:
         # 5) container + alignment + id
         obstacles_all = img_boxes + draw_boxes
         page_hrules = horizontal_rules(page)
+        page_draw = page.get_drawings()
         for idx, reg in enumerate(ordered):
             if "container" not in reg:
                 others = [r["bbox"] for r in ordered if r is not reg]
@@ -698,6 +740,12 @@ def extract(job: Job) -> None:
             fr = fill_in_rules(reg, page_hrules)
             if fr:
                 reg["fill_rules"] = [[round(v, 2) for v in r] for r in fr]
+            # Dòng nào có dấu gạch đầu dòng — metadata thuần như `fill_rules`, không đụng
+            # source_text/source_hash/region_id nên job đã dịch chạy lại stage 2 không mồ côi.
+            if len(reg["lines"]) > 1:
+                bl = bullet_lines(reg, page_draw)
+                if bl:
+                    reg["bullet_lines"] = bl
             qx, qy = int(reg["container"][0] // 8), int(reg["container"][1] // 8)
             reg["region_id"] = f"{fp8}/p{pno}/{reg['region_type']}/{qx}_{qy}/{idx}"
             reg["reading_index"] = idx

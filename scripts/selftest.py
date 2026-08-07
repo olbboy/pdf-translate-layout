@@ -1095,6 +1095,30 @@ _wide = {"lines": [_pl(29.8, 120.0, "Note"),
 check("thụt lề: thụt vô lý (vùng hai cột) thì bỏ, không ném chữ ra giữa trang",
       _fp.segment_indents(_wide, 29.8, 3) == [0.0] * 3,
       str(_fp.segment_indents(_wide, 29.8, 3)))
+# ── dấu gạch đầu dòng là bằng chứng cấu trúc mạnh nhất (1.9.25) ────────
+# `•` `◇` `∘` của bản gốc là HÌNH VẼ nhỏ, không phải ký tự, nên không nằm trong `lines`.
+# Chúng nói đúng số mục, còn `paragraph_starts` chỉ đoán từ chỗ ngắt dòng và sai ở nguồn
+# ngắt dòng cứng giữa câu — ca thật HV48100 p19 `CAUTION`.
+def _bl_reg(xs, bullets, ys=None):
+    ys = ys or [100.0 + 12.0 * i for i in range(len(xs))]
+    r = {"lines": [{"bbox": [x, y - 8.0, x + 60.0, y + 2.0],
+                    "spans": [{"origin": [x, y], "text": "x" * 40}]}
+                   for x, y in zip(xs, ys)]}
+    r["bullet_lines"] = bullets
+    return r
+
+
+# Ba dòng, dấu ở dòng 1 và 2; dòng 0 là tiêu đề → 3 mục, khớp 3 đoạn dịch.
+_bl = _bl_reg([27.4, 38.7, 38.7], [1, 2])
+check("bullet: dấu quyết định ánh xạ, đứng trên ba hình mẫu suy đoán",
+      _fp.segment_source_lines(_bl, 3) == ([0, 1, 2], 0),
+      str(_fp.segment_source_lines(_bl, 3)))
+# Số mục theo dấu không khớp số đoạn dịch → lùi về hình mẫu cũ, không ép bừa.
+check("bullet: số mục không khớp số đoạn thì lùi về hình mẫu cũ",
+      (_fp.segment_source_lines(_bl_reg([27.4, 38.7, 38.7], [2]), 3) or (None, None))[1] != 0)
+check("bullet: vùng không có dấu thì không đụng gì",
+      (_fp.segment_source_lines(_bl_reg([27.4, 38.7, 38.7], []), 3) or (None, None))[1] != 0)
+
 # ── neo baseline theo đoạn (1.9.20) ────────────────────────────────────
 # Dấu `•` `◇` `∘` là glyph riêng, neo cứng ở baseline nguồn. Fitter rải dòng liên tục nên
 # đoạn i chỉ rơi đúng dấu của nó khi mọi đoạn trước chiếm đúng số dòng như nguồn.
@@ -1241,6 +1265,23 @@ check("ký hiệu mũ: make_region thật sự gộp trước khi dựng source_
           os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),
           encoding="utf-8").read())
 
+# Dấu phải nằm NGOÀI vệt mực mọi dòng — chồng lên chữ thì đó là ký hiệu trong câu hoặc nét
+# của hình minh hoạ, không phải gạch đầu dòng.
+_mk = lambda x, y: {"rect": _mu.Rect(x, y - 1.1, x + 2.3, y + 1.1)}  # noqa: E731
+_breg = {"bbox": [27.4, 92.0, 200.0, 126.0],
+         "lines": [{"bbox": [38.7, 92.0, 160.0, 102.0],
+                    "spans": [{"origin": [38.7, 100.0]}]},
+                   {"bbox": [38.7, 104.0, 160.0, 114.0],
+                    "spans": [{"origin": [38.7, 112.0]}]}]}
+check("bullet: dấu ngoài vệt mực được tính",
+      _eg.bullet_lines(_breg, [_mk(29.4, 97.5), _mk(29.4, 109.5)]) == [0, 1])
+check("bullet: nét nằm TRONG vệt mực không phải dấu",
+      _eg.bullet_lines(_breg, [_mk(40.0, 97.5)]) == [],
+      str(_eg.bullet_lines(_breg, [_mk(40.0, 97.5)])))
+check("bullet: nét quá xa mép trái vùng không phải dấu",
+      _eg.bullet_lines(_breg, [_mk(120.0, 97.5)]) == [])
+check("bullet: nét to không phải dấu",
+      _eg.bullet_lines(_breg, [{"rect": _mu.Rect(29.4, 94.0, 45.0, 101.0)}]) == [])
 check("căn lề cột: stage 2 thật sự gọi đồng thuận sau khi gán alignment",
       "column_consensus(ordered)" in open(
           os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),

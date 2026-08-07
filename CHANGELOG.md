@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.25] - 2026-08-07
+
+### Added
+
+- **Bullet marks are now the first-choice pattern for mapping paragraphs.** The
+  `•` `◇` `∘` of the source are small **drawings**, not characters, so they never
+  appear in a region's `lines` — yet they are the strongest evidence of item
+  structure there is: one mark, one item, no inference. The three patterns from
+  1.9.11/1.9.15 all reason from text geometry and fail on exactly those sources
+  that break lines mid-sentence. `bullet_lines` (stage 2, pure metadata like
+  `fill_rules`) records which lines carry a mark; the head of the region, before
+  the first mark, still gets split by `paragraph_starts`.
+
+  Signature: a stroke under 8pt each way, within 30pt of the region's left edge,
+  centred less than 7pt above the baseline it marks, and **outside every line's
+  ink** — a mark overlapping text is a symbol in a sentence or part of a figure.
+
+  Measured across the jobs on hand: 18 regions carry marks. Where the item count
+  matches the translated segment count — **9 regions agree exactly with the old
+  patterns, 3 regions the old patterns gave up on, 0 disagreements**. Purely
+  additive: no match means falling back, never forcing.
+
+  On HV48100, 15 of 15 marked regions now map by mark. The p19 `CAUTION` block —
+  which 1.9.20 declared unsolvable in the engine — now places all 9 items
+  correctly, including the `Relative humidity` item `paragraph_starts` missed.
+  That earlier verdict was wrong because it only looked for signal in the text;
+  the real signal was drawn on the page all along.
+
 ## [1.9.24] - 2026-08-07
 
 ### Fixed
