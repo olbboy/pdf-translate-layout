@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.9.32"
+ENGINE_VERSION = "1.9.33"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
@@ -135,6 +135,42 @@ def fill_in_rules(reg: dict, page_rules: list) -> list:
         if left and right:
             hits.append([x0, y0, x1, y1])
     return hits
+
+
+FONT_SUBSET_PREFIX_RE = re.compile(r"^[A-Z]{6}\+")
+# Dấu hiệu SERIF trong tên font, gồm cả tên họ chữ CJK có chân (Song/宋, Ming/明, Mincho,
+# Batang). `roman` bắt "Times New Roman"; `sans` được xét TRƯỚC nên "Sans Serif" không dính.
+SERIF_NAME_HINTS = ("serif", "times", "roman", "georgia", "garamond", "palatino",
+                    "baskerville", "caslon", "century", "cambria", "constantia", "didot",
+                    "charter", "charis", "utopia", "bookman", "slab", "song", "sung",
+                    "ming", "mincho", "batang", "kai", "fangsong", "simsun", "nsimsun")
+# Dấu hiệu SANS. `hei`/黑体 và `gothic`/ゴシック là tên họ chữ không chân của CJK.
+SANS_NAME_HINTS = ("sans", "arial", "helvetica", "calibri", "verdana", "tahoma", "segoe",
+                   "roboto", "lato", "futura", "avenir", "franklin", "myriad", "impact",
+                   "frutiger", "univers", "gill", "grotesk", "grotesque", "inter",
+                   "hei", "gothic", "yahei", "dengxian", "yuanti", "quan")
+
+
+def is_serif_font(name: str, flags: int = 0) -> bool:
+    """Font có chân hay không, quyết định theo TÊN chứ không theo cờ của PDF.
+
+    Cờ `serif` (bit 2 của `flags`, tức FontDescriptor /Flags bit 2) là thứ bộ sinh PDF tự
+    khai và trong kho này **sai gần như toàn bộ**: đo trên nguồn của mọi job, 9 font mang cờ
+    serif thì **8 thực ra là sans** — `RanyLight/Regular/Medium/Bold` (font thương hiệu, sans
+    hình học), `NotoSansHans-Regular` và `SourceHanSansCN-Medium` (chữ "Sans" nằm ngay trong
+    tên), `FandolHei-Regular`, `CTChaoHeiSF`, `STXihei` (Hei/黑体 = không chân). Đúng đúng
+    MỘT font: `AdobeSongStd-Light` (Song/宋体 = có chân). Hệ quả: bốn datasheet Pytes ra
+    79-98% ký tự Noto **Serif** trong khi bản gốc là sans.
+
+    Nên: tên nói gì thì nghe tên. `sans` xét trước `serif` để "Sans Serif" không bị đọc nhầm.
+    Tên không có dấu hiệu nào → **sans**, vì cờ đã chứng minh là không dùng được và tài liệu
+    kỹ thuật gần như luôn dùng sans; đoán sai theo chiều này chỉ mất phần chân chữ, còn đoán
+    sai chiều kia làm cả tài liệu tiếp thị đổi giọng.
+    """
+    n = FONT_SUBSET_PREFIX_RE.sub("", name or "").lower()
+    if any(k in n for k in SANS_NAME_HINTS):
+        return False
+    return any(k in n for k in SERIF_NAME_HINTS)
 
 
 SPEC_COL_X_TOL = 3.0       # hai hàng coi là cùng một neo cột khi mép mực lệch dưới ngần này

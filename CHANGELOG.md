@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.33] - 2026-08-07
+
+### Fixed
+
+- **Serif-ness is now decided by the font *name*, not by the PDF flag.** The `serif` flag
+  (bit 2 of the FontDescriptor `/Flags`) is whatever the producing tool chose to write, and
+  across this corpus it is wrong almost everywhere: of the **9 fonts carrying the serif flag,
+  8 are actually sans** — `RanyLight/Regular/Medium/Bold` (a geometric sans brand face),
+  `NotoSansHans-Regular` and `SourceHanSansCN-Medium` (the word "Sans" is in the name),
+  `FandolHei-Regular`, `CTChaoHeiSF`, `STXihei` (Hei/黑体 means sans). Exactly **one** was
+  right: `AdobeSongStd-Light` (Song/宋体 is a serif). The measured consequence: the four Pytes
+  datasheets rendered **79–98% of their characters in Noto Serif** against a sans original,
+  and the Pi Station 261 EX datasheet rendered **100%**.
+
+  The rule checks `sans` hints first (so "Sans Serif" is not misread), then `serif` hints, and
+  falls back to **sans** when the name says nothing. Sans is the safer default: the flag has
+  been shown unusable, technical documents are overwhelmingly sans, and guessing wrong this
+  way costs only the serifs — guessing wrong the other way changes the voice of an entire
+  marketing document. Hints cover CJK family names too: `song`/`ming`/`mincho`/`batang`/
+  `simsun` are serif, `hei`/`gothic`/`yahei`/`dengxian` are sans.
+
+  Measured over 2578 regions of five released documents: **0 region ids lost or added, 0
+  `source_hash` changed**. **8 regions change run structure** — every one of them a *merge* of
+  two runs that were only ever split by the bogus flag (Arial + NotoSansHans, Rany + Arial);
+  role order is preserved and no role is lost.
+
+  Layout, `region_id`, `source_hash` and translations are untouched — an existing job picks
+  this up by re-running stage 2 → 7, with no orphaned responses.
+
 ## [1.9.32] - 2026-08-07
 
 ### Fixed

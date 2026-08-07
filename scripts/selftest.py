@@ -1641,6 +1641,42 @@ check("dòng chứng nhận nhiều mục vẫn là translate",
       == "translate")
 
 
+# ── serif quyết định theo TÊN font, không theo cờ PDF (engine 1.9.33) ─────────────────
+# Đo trên nguồn của mọi job: 9 font mang cờ serif thì 8 thực ra là sans. Các case dưới đây
+# là font THẬT trong kho, kèm cờ thật của chúng.
+from _common import is_serif_font as _isf
+
+for _name, _flag in [("RanyLight", 4), ("RanyRegular", 5), ("RanyBold", 20), ("RanyMedium", 4),
+                     ("NotoSansHans-Regular", 4), ("SourceHanSansCN-Medium", 4),
+                     ("FandolHei-Regular", 4), ("CTChaoHeiSF", 4), ("STXihei", 4)]:
+    check(f"cờ serif nhưng là sans thật: {_name}", _isf(_name, _flag) is False)
+check("Song/宋 là serif thật, không bị luật tên làm hỏng",
+      _isf("AdobeSongStd-Light", 4) is True)
+check("tên có 'Serif' thì là serif dù cờ = 0", _isf("NotoSerif-Regular", 0) is True)
+check("Times New Roman là serif dù cờ = 0", _isf("TimesNewRomanPSMT", 0) is True)
+check("'Sans Serif' đọc là sans, không phải serif", _isf("DejaVu Sans Serif", 4) is False)
+check("prefix subset không làm lệch phán đoán", _isf("ABCDEF+RanyBold", 20) is False)
+check("SimSun/宋体 là serif", _isf("SimSun", 0) is True)
+check("Mincho là serif", _isf("MS-Mincho", 0) is True)
+check("tên lạ, không dấu hiệu → sans (cờ không dùng được)", _isf("Rany", 4) is False)
+check("Arial vẫn là sans", _isf("ArialMT", 0) is False)
+
+
+# `style_of` phải HỎI `is_serif_font`, không được đọc thẳng cờ — nếu không thì luật tên có
+# đúng đến đâu cũng vô nghĩa vì stage 2 không dùng tới.
+from extract_group import style_of as _so
+
+check("style_of: Rany cờ serif vẫn ra sans",
+      _so({"flags": 4, "font": "RanyLight"})["serif"] is False)
+check("style_of: Song cờ serif ra serif",
+      _so({"flags": 4, "font": "AdobeSongStd-Light"})["serif"] is True)
+check("style_of: Times cờ 0 vẫn ra serif",
+      _so({"flags": 0, "font": "TimesNewRomanPSMT"})["serif"] is True)
+check("style_of: giữ nguyên bold/italic/mono theo cờ",
+      _so({"flags": 16 | 2 | 8, "font": "ArialMT"})
+      == {"bold": True, "italic": True, "serif": False, "mono": True})
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

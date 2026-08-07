@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.32"
+  version: "1.9.33"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.32 (engine `1.9.32`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.33 (engine `1.9.33`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -642,6 +642,27 @@ metadata:
 > chữ ngoài placeholder.
 > Không đụng layout, không đụng `region_id`/`source_hash` — nhưng **đổi số hiệu placeholder**
 > của 11 vùng ấy, nên job đã dịch phải chạy lại stage 3 → 7 và dịch lại đúng những vùng đó.
+> **1.9.33** **font có chân hay không quyết định theo TÊN, không theo cờ của PDF**
+> (`is_serif_font` ở `_common.py`, dùng trong `style_of`). Cờ `serif` (bit 2 của
+> FontDescriptor `/Flags`) là thứ bộ sinh PDF tự khai, và trong kho này **sai gần như toàn
+> bộ**: đo trên nguồn của mọi job, **9 font mang cờ serif thì 8 thực ra là sans** —
+> `RanyLight/Regular/Medium/Bold` (font thương hiệu, sans hình học), `NotoSansHans-Regular`
+> và `SourceHanSansCN-Medium` (chữ "Sans" nằm ngay trong tên), `FandolHei-Regular`,
+> `CTChaoHeiSF`, `STXihei` (Hei/黑体 = không chân). Đúng **một** font: `AdobeSongStd-Light`
+> (Song/宋体 = có chân). Hệ quả đo được: bốn datasheet Pytes ra **79-98% ký tự Noto Serif**
+> trong khi bản gốc là sans, và Pi Station 261 EX datasheet ra **100%**.
+> Luật: dấu hiệu `sans` xét TRƯỚC `serif` (để "Sans Serif" không đọc nhầm), rồi tới dấu hiệu
+> `serif`; tên không có dấu hiệu nào → **sans**. Chọn sans làm mặc định vì cờ đã chứng minh
+> không dùng được, tài liệu kỹ thuật gần như luôn dùng sans, và đoán sai theo chiều này chỉ
+> mất phần chân chữ — đoán sai chiều kia làm cả tài liệu tiếp thị đổi giọng.
+> Dấu hiệu bao gồm cả tên họ chữ CJK: `song`/`ming`/`mincho`/`batang`/`simsun` là có chân,
+> `hei`/`gothic`/`yahei`/`dengxian` là không chân.
+> Đo trên 2578 vùng của 5 tài liệu đã phát hành: **0 region_id mất/mới, 0 source_hash đổi**;
+> ký tự serif 100% → 0% (Pi Station datasheet), 5% → 0% (Lite quick guide), 1% → 1% (HV48100
+> manual). **8 vùng đổi cấu trúc run** — tất cả đều là GỘP hai run vốn chỉ bị tách bởi cờ
+> serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
+> Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
+> stage 2 → 7 là hưởng, response không mồ côi.
 
 > **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
 > `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`
