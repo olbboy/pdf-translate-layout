@@ -800,6 +800,12 @@ _src = {n: open(os.path.join(os.path.dirname(os.path.abspath(__file__)), n),
 check("ba stage đọc chung RERUNNABLE_STATUSES, không hardcode",
       all("RERUNNABLE_STATUSES" in s and '"NEEDS_REVIEW")' not in s for s in _src.values()),
       str([n for n, s in _src.items() if "RERUNNABLE_STATUSES" not in s]))
+# Chốt phải nằm ở CỔNG VÀO, không phải chỉ dùng để quyết định chuyển trạng thái cuối hàm.
+# `validate_responses` từng chỉ có vế sau nên ghi được vào job đã phát hành (2026-08-07).
+_GATE = "if job.status() not in RERUNNABLE_STATUSES:"
+check("cả ba stage chặn ngay ở cổng vào, không chỉ ở bước chuyển trạng thái",
+      all(_GATE in s for s in _src.values()),
+      str([n for n, s in _src.items() if _GATE not in s]))
 
 # Hướng dự phòng: nhãn hình có đường chỉ dẫn chắn ngay bên phải thì nới sang TRÁI và neo
 # mép phải, giữ nguyên điểm nối của đường chỉ dẫn. Ca thật Lite p13: vật cản ở x=129.5,

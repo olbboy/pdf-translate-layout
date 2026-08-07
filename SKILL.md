@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.27"
+  version: "1.9.28"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.27 (engine `1.9.27`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.28 (engine `1.9.28`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -580,6 +580,14 @@ metadata:
 > có **15-16 nét kẻ ngang mảnh mỗi bản, 0 nét đứt**; ba nét đứt duy nhất trong cả kho là gạch
 > dẫn mục lục V5. Bỏ đúng ba ca oan, không bỏ sót ca thật nào. V5 P1 **23 → 20**, còn 4 mã
 > cần waive thay vì 5.
+> **1.9.28** `validate_responses` chặn ngay ở **cổng vào** như `extract_group` và
+> `translate_prep`. Nó vẫn đọc `RERUNNABLE_STATUSES`, nhưng chỉ để quyết định chuyển trạng thái
+> ở cuối hàm — không có chốt vào cổng. Hệ quả: stage này **ghi được `target_text` vào
+> `model/regions.json` của job ĐÃ PHÁT HÀNH**, làm model thôi mô tả đúng bản đã duyệt.
+> Xảy ra thật 2026-08-07: một vòng lặp chạy trên hai job mà không kiểm trạng thái; ba stage
+> kia chặn, stage này lọt (kèm `write_responses.py` — helper trong job, cố ý không có chốt).
+> Lần đó nội dung không đổi vì đầu vào y hệt và hàm idempotent — **đó là may, không phải hàng
+> rào**. Test mới đòi cả ba stage có chốt ở cổng vào, không chỉ có tên hằng số trong file.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

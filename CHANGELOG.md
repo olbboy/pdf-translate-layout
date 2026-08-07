@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.28] - 2026-08-07
+
+### Fixed
+
+- **`validate_responses` now refuses at the gate**, the way `extract_group` and
+  `translate_prep` do. It already read `RERUNNABLE_STATUSES`, but only to decide
+  the closing status transition — there was no entry check. The consequence: the
+  stage could write `target_text` into `model/regions.json` of an **already
+  released** job, so the model would stop describing the approved output.
+
+  It happened on 2026-08-07: a loop ran over two jobs without checking status;
+  three stages refused, this one went through (as did `write_responses.py`, a
+  job-local helper that deliberately has no gate). Nothing was lost that time —
+  the inputs were identical and the function is idempotent — but that was luck,
+  not a barrier. The new test requires all three stages to hold the check at the
+  entry point, not merely to mention the constant.
+
 ## [1.9.27] - 2026-08-07
 
 ### Fixed

@@ -480,6 +480,15 @@ def main() -> None:
     args = ap.parse_args()
     job = Job(args.job)
     try:
+        # Chốt vào cổng, giống `extract_group`/`translate_prep`. Thiếu nó thì stage này ghi
+        # được `target_text` vào `model/regions.json` của job ĐÃ PHÁT HÀNH — model thôi mô tả
+        # đúng bản đã duyệt, tức mất dấu vết kiểm chứng. Xảy ra thật ngày 2026-08-07: một
+        # vòng lặp chạy trên hai job không kiểm trạng thái, ba stage kia chặn, stage này lọt.
+        # Lần đó nội dung không đổi (đầu vào y hệt, hàm idempotent) nên không mất gì — nhưng
+        # đó là may, không phải hàng rào.
+        if job.status() not in RERUNNABLE_STATUSES:
+            raise BlockingError(f"status {job.status()} — cần một trong "
+                                f"{', '.join(RERUNNABLE_STATUSES)} (§11.5)")
         job.verify_fingerprint()
         with job.acquire_lock(STAGE):
             validate(job)
