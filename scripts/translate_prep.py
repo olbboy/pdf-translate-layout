@@ -32,7 +32,15 @@ PH_DIGIT_ADJ = re.compile(r"[A-Za-z]\d\s?⟦[A-Z]+_\d+⟧")
 NUMERIC_RE = re.compile(r"^[\d\s.,:/×xX+\-±%()~]+$")
 URL_RE = re.compile(r"(?:https?://|www\.)[^\s⟦⟧]+")
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
-STD_RE = re.compile(r"\b(?:IEC|UL|EN|ISO|CE|FCC|RoHS)\s?-?\d[\w.-]*\b")
+# `UN` nằm trong danh sách vì mã vận chuyển UN (`UN38.3`, `UN3480`) là tên tiêu chuẩn, không
+# phải model. Thiếu nó thì `MODEL_RE` chỉ ăn được `UN38` và bỏ lại `.3`, nên vùng chỉ chứa
+# đúng dấu tiêu chuẩn ấy có residual `"3"` và bị xếp `translate` thay vì `keep` — engine vẽ
+# lại một dấu vốn không cần dịch, và **mất luôn font gốc**: bản gốc dùng `Impact` (nét rất
+# đậm) nhưng khai `bold=False`, nên nó map sang Noto Sans Regular và dấu thành chữ thường
+# mảnh. Ca thật: trang bìa HV48100 và V5° datasheet.
+# Đo trên 2666 vùng của 7 job: đổi đúng 11 vùng, tất cả là `UN38.3` (11) và `UN3480` (1),
+# 0 khớp oan.
+STD_RE = re.compile(r"\b(?:IEC|UL|EN|ISO|CE|FCC|RoHS|UN)\s?-?\d[\w.-]*\b")
 MEAS_RE = re.compile(r"(?<![\w])(\d+(?:[.,]\d+)?\s?(?:°C|°F|mm2|mm²|mm|cm|kWh|Wh|mAh|Ah|Hz|Nm|AWG|kg|kW|V|A|W|m|g|%))(?![\w])")
 MODEL_RE = re.compile(r"\b(?:[A-Z]{1,4}\d+[A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*|Ø\s?\d+(?:mm)?)\b")
 

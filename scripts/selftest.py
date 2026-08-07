@@ -1618,6 +1618,29 @@ check("target_segments: role lấy theo run MỞ ĐẦU đoạn",
       [r for _, r in _tsg(_TWO_RUNS)] == ["emphasis", "body"])
 
 
+# ── mã vận chuyển UN là tiêu chuẩn, không phải model (engine 1.9.32) ──────────────────
+# Vùng chỉ chứa dấu `UN38.3` phải ra `keep`: engine không vẽ lại thì glyph gốc (font Impact
+# nét đậm, khai bold=False nên map sai sang Noto Sans Regular) được giữ nguyên.
+from translate_prep import classify_action as _ca
+
+_m, _map = protect("UN38.3", [])
+check("UN38.3 mask trọn thành MỘT placeholder", _m == "⟦STD_1⟧", _m)
+check("UN38.3 round-trip đúng nguyên văn", restore(_m, _map) == "UN38.3")
+check("vùng chỉ có UN38.3 → keep",
+      _ca({"source_text": "UN38.3", "rotation": 0}, set(), len(_map), _m) == ("keep", "protected_only"),
+      str(_ca({"source_text": "UN38.3", "rotation": 0}, set(), len(_map), _m)))
+_m2, _map2 = protect("UN3480", [])
+check("UN3480 cũng là tiêu chuẩn", _m2 == "⟦STD_1⟧", _m2)
+# Không được ăn oan chữ thường hay từ có UN dính chữ.
+check("`Unit 3` không bị coi là mã UN", "⟦STD" not in protect("Unit 3 hoạt động", [])[0])
+check("`UNIT` không bị coi là mã UN", "⟦STD" not in protect("UNIT kiểm tra", [])[0])
+# Dòng chứng nhận còn chữ khác thì vẫn phải dịch.
+_m3, _map3 = protect("CE, IEC62619, UN38.3", [])
+check("dòng chứng nhận nhiều mục vẫn là translate",
+      _ca({"source_text": "CE, IEC62619, UN38.3", "rotation": 0}, set(), len(_map3), _m3)[0]
+      == "translate")
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

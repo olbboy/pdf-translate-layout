@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.32] - 2026-08-07
+
+### Fixed
+
+- **UN transport codes are standards, not model numbers** — `STD_RE` now also accepts `UN`.
+  Without it, `MODEL_RE` matched only `UN38` and left `.3` behind, so a region containing
+  nothing but the mark `UN38.3` had a residual of `"3"` and `classify_action` filed it as
+  `translate` instead of `keep`. The engine then repainted a mark that never needed
+  translating — and **lost its typeface doing so**: the source sets it in `Impact` (very heavy)
+  but declares `bold=False`, so it mapped to Noto Sans Regular and the certification mark came
+  out as thin body text. Real cases: the cover pages of the HV48100 and V5° datasheets.
+
+  Measured across **2666 regions in 7 jobs: exactly 11 regions change**, all of them `UN38.3`
+  (11) and `UN3480` (1), with **0 false matches** — `Unit 3` and `UNIT` do not match, because
+  the rule requires a digit directly after `UN`.
+
+  A `keep` region is left untouched, so the original glyphs survive; Gate 3's keep branch
+  still checks it. A certification line with more than one item (`CE, IEC62619, UN38.3`) stays
+  `translate`, since text remains outside the placeholders.
+
+  Layout, `region_id` and `source_hash` are untouched, but the **placeholder numbering** of
+  those 11 regions changes, so an already-translated job must re-run stage 3 → 7 and
+  re-translate exactly those regions.
+
 ## [1.9.31] - 2026-08-07
 
 ### Added

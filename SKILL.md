@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.31"
+  version: "1.9.32"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.31 (engine `1.9.31`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.32 (engine `1.9.32`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -629,6 +629,19 @@ metadata:
 > `"\n".join(run.text)` chèn thêm một ranh giới đoạn giữa mỗi cặp run, nên target có tiêu đề
 > in đậm + phần còn lại bị đếm thừa đoạn. Ranh giới đoạn nằm trong CHỮ; role của đoạn lấy theo
 > run mở đầu nó.
+> **1.9.32** **mã vận chuyển UN là tên tiêu chuẩn**, không phải model — `STD_RE` nhận thêm
+> `UN`. Thiếu nó thì `MODEL_RE` chỉ ăn được `UN38` và bỏ lại `.3`, nên vùng chỉ chứa đúng dấu
+> `UN38.3` có residual `"3"` và bị `classify_action` xếp `translate` thay vì `keep`. Engine vẽ
+> lại một dấu vốn không cần dịch, và **mất luôn font gốc**: bản gốc dùng `Impact` (nét rất
+> đậm) nhưng khai `bold=False`, nên nó map sang Noto Sans Regular và dấu chứng nhận thành chữ
+> thường mảnh. Ca thật: trang bìa HV48100 và V5° datasheet.
+> Đo trên **2666 vùng của 7 job: đổi đúng 11 vùng**, tất cả là `UN38.3` (11) và `UN3480` (1),
+> **0 khớp oan** — `Unit 3`, `UNIT` không dính vì luật đòi chữ số ngay sau `UN`.
+> Vùng thành `keep` thì engine không đụng tới, glyph gốc còn nguyên; Gate 3 nhánh keep vẫn
+> chấm bình thường. Dòng chứng nhận nhiều mục (`CE, IEC62619, UN38.3`) vẫn `translate` vì còn
+> chữ ngoài placeholder.
+> Không đụng layout, không đụng `region_id`/`source_hash` — nhưng **đổi số hiệu placeholder**
+> của 11 vùng ấy, nên job đã dịch phải chạy lại stage 3 → 7 và dịch lại đúng những vùng đó.
 
 > **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
 > `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`
