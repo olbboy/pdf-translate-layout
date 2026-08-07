@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.7"
+  version: "1.9.8"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.7 (engine `1.9.7`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.8 (engine `1.9.8`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -344,6 +344,18 @@ metadata:
 > 0 region_id mất, 0 mới, 0 source_hash đổi, `responses.jsonl` không mồ côi. Job cũ chạy lại
 > stage 2 → 2.5 → 3 → 5 → 6 → 7; response chỉ dùng role `body` vẫn hợp lệ vì `body` luôn có
 > trong `style_roles`, chỉ là mất phần in đậm cho tới khi bản dịch tách run.
+> **1.9.8** `infer_alignment` đo bằng **số dòng đồng thuận**, không bằng biên độ max-min.
+> Biên độ để **một dòng lạc** quyết định cả khối. Ca thật V5 Series p15: đoạn văn xuôi căn
+> trái 8 dòng cùng mép trái 26.8, nhưng `merge_paragraph` gộp thêm chú thích bảng đặt lệch
+> phải ở dòng cuối — `vl` vọt lên 268.5 trong khi `vr` 176.8, `min` chọn `right`, cả đoạn bị
+> đẩy sang phải. Nay đếm số dòng cùng chia sẻ một mốc (±1pt): dòng lạc chỉ còn một phiếu.
+> **Lối thoát bằng chứng**: khi không mốc nào được ≥2 dòng đồng thuận thì giữ nguyên luật
+> biên độ cũ. Bỏ lối thoát này thì ô hai dòng căn giữa thật bị ép về trái — đo trên 5 job,
+> 4 ô kiểu `Charge: …\nDischarge: …` trong ô gộp bị phá.
+> Đo trên 258 region ≥2 dòng của 5 job: **đổi đúng 6 region, tất cả sang `left`, tất cả đều
+> đúng** (hai ô nhãn bảng thông số, đoạn mục 7, hai ô của E-BOX datasheet). 0 region đổi
+> sang `center`/`right`.
+> Không đụng `region_id`, `container` hay bản dịch — job cũ chạy lại stage 2 → 7.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

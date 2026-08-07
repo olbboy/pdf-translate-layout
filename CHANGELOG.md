@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.8] - 2026-08-07
+
+### Fixed
+
+- **`infer_alignment` now counts agreeing lines instead of measuring a
+  max-minus-min spread.** A spread lets a *single* stray line decide the whole
+  block. Real case: an eight-line left-aligned paragraph, every line starting at
+  26.8, that `merge_paragraph` had joined with a right-placed table caption on
+  the last line — the left spread jumped to 268.5 against a right spread of
+  176.8, so `min` picked `right` and the entire paragraph shifted right. Counting
+  how many lines share an edge (within 1pt) leaves the stray line holding one
+  vote.
+
+  **Evidence escape hatch:** when no edge is shared by at least two lines, the
+  old spread rule still applies. Without it, genuinely centred two-line cells get
+  forced left — measured across 5 jobs, four `Charge: …/Discharge: …` cells in
+  merged columns broke.
+
+  Measured over 258 multi-line regions across 5 jobs: **exactly 6 regions change,
+  all to `left`, all of them correctly** — two spec-table label cells, the
+  section-7 paragraph, and two cells in another datasheet. Nothing moves to
+  `center` or `right`.
+
+  No `region_id`, `container` or translation change — existing jobs re-run
+  stages 2 through 7.
+
 ## [1.9.7] - 2026-08-07
 
 ### Fixed

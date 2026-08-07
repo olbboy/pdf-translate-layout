@@ -156,10 +156,28 @@ def split_label_clusters(grp: list) -> list[list]:
     return clusters
 
 
+def _agreement(vals: list, tol: float = 1.0) -> int:
+    """Số dòng đông nhất cùng chia sẻ một mốc (±tol) — thống kê bền với dòng lạc."""
+    return max(sum(1 for w in vals if abs(w - v) <= tol) for v in vals)
+
+
 def infer_alignment(lines: list, container: list) -> str:
     if len(lines) >= 2:
         lefts = [l["bbox"][0] for l in lines]; rights = [l["bbox"][2] for l in lines]
         centers = [(a + b) / 2 for a, b in zip(lefts, rights)]
+        # Biên độ max-min để MỘT dòng lạc quyết định cả khối. Ca thật V5 Series p15: đoạn
+        # văn xuôi căn trái 8 dòng cùng mép trái 26.8, nhưng `merge_paragraph` gộp thêm chú
+        # thích bảng đặt lệch phải ở dòng cuối — vl vọt lên 268.5 trong khi vr 176.8, nên
+        # `min` chọn "right" và cả đoạn bị đẩy sang phải.
+        # Đếm số dòng ĐỒNG THUẬN thì dòng lạc chỉ là 1 phiếu.
+        al, ar, ac = (_agreement(v) for v in (lefts, rights, centers))
+        if max(al, ar, ac) >= 2:
+            if al >= ar and al >= ac:
+                return "left"
+            return "right" if ar > ac else "center"
+        # Không mốc nào được hai dòng đồng thuận thì chưa có bằng chứng — giữ luật biên độ
+        # cũ. Bỏ lối thoát này thì ô hai dòng căn giữa thật bị ép về trái: đo trên 5 job,
+        # 4 ô kiểu "Charge: …\nDischarge: …" trong ô gộp bị phá.
         vl, vr, vc = (max(v) - min(v) for v in (lefts, rights, centers))
         m = min(vl, vr, vc)
         if m == vl:

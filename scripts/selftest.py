@@ -817,10 +817,30 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── căn lề đo bằng số dòng đồng thuận, không bằng biên độ (1.9.8) ───────
+# Biên độ max-min để MỘT dòng lạc quyết định cả khối. Ca thật V5 Series p15: 8 dòng cùng
+# mép trái 26.8 + một chú thích bảng lệch phải ở dòng cuối → cả đoạn bị đẩy sang phải.
+import extract_group as _eg  # noqa: E402
+
+_ln = lambda a, b: {"bbox": [a, 0.0, b, 10.0]}  # noqa: E731
+_CONT = [27.0, 0.0, 415.0, 100.0]
+
+check("căn lề: một dòng lạc không lật được khối căn trái",
+      _eg.infer_alignment([_ln(26.8, 386.1)] * 4 + [_ln(295.0, 392.9)], _CONT) == "left")
+check("căn lề: khối căn phải thật vẫn là right",
+      _eg.infer_alignment([_ln(300.0, 392.0), _ln(320.0, 392.0), _ln(280.0, 392.0)],
+                          _CONT) == "right")
+check("căn lề: khối căn giữa thật vẫn là center",
+      _eg.infer_alignment([_ln(100.0, 300.0), _ln(120.0, 280.0), _ln(110.0, 290.0)],
+                          _CONT) == "center")
+check("căn lề: hai dòng không mốc nào đồng thuận thì giữ luật biên độ cũ",
+      _eg.infer_alignment([_ln(120.0, 300.0), _ln(150.0, 290.0)], _CONT) == "center")
+check("căn lề: region một dòng không đụng tới nhánh mới",
+      _eg.infer_alignment([_ln(30.0, 200.0)], _CONT) == "left")
+
 # ── role của tiêu đề phụ in đậm mở đầu region (1.9.7) ───────────────────
 # Bản gốc gộp tiêu đề phụ in đậm + văn xuôi vào một block. Luật cũ chỉ cho `emphasis` khi
 # i > 0 nên run 0 in đậm rơi về `body`, rồi `role_style()` lấy nó làm style cho CẢ VÙNG.
-import extract_group as _eg  # noqa: E402
 
 
 def _span(text, bold, x=0.0):
