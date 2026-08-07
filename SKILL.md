@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.12"
+  version: "1.9.13"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.12 (engine `1.9.12`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.13 (engine `1.9.13`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -406,6 +406,22 @@ metadata:
 > space thì chỗ đó sai.
 > Kết quả trên V5 Series: `MASK_CLIPPED` **8 → 0**, `MASK_CONFLICT` **2 → 0**, vẽ **457/457
 > vùng, không bỏ vùng nào**. HV48100 không đổi (2 vùng bỏ vẽ vẫn là ký hiệu Wingdings).
+> **1.9.13** `leader_split` — dòng mục lục gộp tiêu đề và số trang được tách thành hai
+> cột. Dòng mục lục là MỘT span, tiêu đề và số trang ngăn nhau bằng dãy space (gạch dẫn là
+> line-art riêng); `tokenize` bỏ sạch khoảng trắng nên cụm co lại, rồi `infer_alignment` đọc
+> dòng gần-full-width thành `center`/`right` và đẩy cả cụm ra giữa hoặc sang phải — đè lên
+> chính nét gạch dẫn. `column_split` không đụng tới vì nó đòi `table_cell` và ≥3 dòng có
+> lưới lặp.
+> Hai dạng: (A) một line, khe ≥4 space, đuôi là số trang 1-3 chữ số — ranh giới cột đo bằng
+> bề rộng số trang; (B) PDF khai **hai "line" cùng một y** — đó là hai cột sẵn, mỗi cột đã
+> có bbox riêng. Chữ ký rất hẹp, đo trên 5 job: khớp **đúng các dòng mục lục, 0 ca oan**.
+> Hợp đồng bản dịch giống `column_split`: hai đoạn ngăn bằng `\n`, trái→phải.
+> **Kèm sửa một lỗi có sẵn của `column_split`**: nó ghép các run bằng `"\n".join`, tức chèn
+> thêm một dấu ngăn cột giữa mỗi cặp run. Target nhiều run — tiêu đề in đậm + phần còn lại,
+> đúng thứ 1.9.7 vừa sinh ra — bị đếm thừa cột nên hàm lặng lẽ trả None. Nay ghép bằng `""`:
+> run là đơn vị style, không phải đơn vị cột.
+> Kết quả V5 Series: trang mục lục 24/24 dòng đúng chỗ, số trang thẳng cột; vẽ **467 vùng,
+> bỏ 0**.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

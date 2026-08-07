@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.13] - 2026-08-07
+
+### Added
+
+- **`leader_split`** splits a contents-page row that carries its title and page
+  number in one region into two columns. Such a row is a single span with the
+  title and the number separated by a run of spaces (the dot leader is separate
+  line art). `tokenize` drops the spaces, the text collapses, and
+  `infer_alignment` then reads the near-full-width line as `center`/`right` and
+  pushes the whole thing over the leader. `column_split` never applied: it
+  requires a `table_cell` and a repeating grid of at least three lines.
+
+  Two shapes: (A) one line, a gap of 4+ spaces, and a 1-3 digit tail — the column
+  boundary is measured from the number's width; (B) the PDF reports **two "lines"
+  sharing one y**, which are already two columns with their own boxes. The
+  signature is narrow: across 5 jobs it matches contents rows only, no false
+  positives. Same translation contract as `column_split`: two `\n`-separated
+  segments, left to right.
+
+### Fixed
+
+- **A pre-existing bug in `column_split`**: it joined target runs with
+  `"\n".join`, inserting an extra column separator between every pair of runs. A
+  multi-run target — a bold lead-in plus the rest, exactly what 1.9.7 started
+  producing — was counted as having too many columns, so the function silently
+  returned None. Runs are a styling unit, not a column unit; they now join with
+  `""`.
+
+  Result on one job: the contents page renders all 24 rows correctly with page
+  numbers in a straight column, and **467 regions painted, none skipped**.
+
 ## [1.9.12] - 2026-08-07
 
 ### Fixed

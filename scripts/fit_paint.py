@@ -346,7 +346,10 @@ def column_split(reg: dict) -> list[dict] | None:
     if sum(1 for n in spread if n >= 2) < 2:
         return None
 
-    segments = "\n".join(r["text"] for r in reg["target_runs"]).split("\n")
+    # Ghép các run bằng "" chứ KHÔNG phải "\n": run là đơn vị style, không phải đơn vị cột.
+    # `"\n".join` chèn thêm một dấu ngăn cột giữa mỗi cặp run, nên target nhiều run (tiêu đề
+    # in đậm + phần còn lại) bị đếm thừa cột và hàm lặng lẽ trả None.
+    segments = "".join(r["text"] for r in reg["target_runs"]).split("\n")
     if len(segments) != len(cols):
         return None
 
@@ -364,6 +367,77 @@ def column_split(reg: dict) -> list[dict] | None:
         sub["column_index"] = k
         subs.append(sub)
     return subs
+
+
+# Dòng mục lục: "tiêu đề" + khe rộng + "số trang", tất cả trong MỘT span.
+LEADER_GAP_RE = re.compile(r"\S(\s{4,})(\S+)\s*$")
+
+
+def leader_split(reg: dict, pack: "FontPack") -> list[dict] | None:
+    """Dòng mục lục gộp tiêu đề và số trang → hai sub-region; None nếu không phải ca đó.
+
+    Vì sao cần: dòng mục lục là MỘT span, tiêu đề và số trang ngăn nhau bằng một dãy space
+    (gạch dẫn là line-art riêng). `tokenize` bỏ sạch khoảng trắng nên cụm co lại, rồi
+    `infer_alignment` đọc dòng gần-full-width thành `center`/`right` và đẩy cả cụm ra giữa
+    hoặc sang phải — đè lên chính nét gạch dẫn. `column_split` không đụng tới vì nó đòi
+    `table_cell` và ≥3 dòng có lưới lặp.
+
+    Chữ ký đo được, rất hẹp: region MỘT dòng, ngoài `table_cell`, text có khe ≥4 space và
+    đuôi sau khe là **số trang 1-3 chữ số**. Đo trên 5 job: khớp đúng **7 vùng, toàn bộ là
+    dòng mục lục**, 0 ca oan.
+
+    Hợp đồng với bản dịch giống `column_split`: hai đoạn ngăn bằng "\n", trái→phải. Lệch số
+    đoạn thì trả None — engine không tự đoán.
+    """
+    if reg["region_type"] == "table_cell" or reg["rotation"] != 0:
+        return None
+    segments = "".join(r["text"] for r in reg["target_runs"]).split("\n")
+    if len(segments) != 2:
+        return None
+    c = reg["container"]
+
+    # Dạng B: PDF khai hai "line" nhưng CÙNG một y — đó là hai cột, không phải hai dòng.
+    # Không phải đo gì, mỗi cột đã có bbox riêng.
+    if len(reg["lines"]) == 2:
+        a, b = reg["lines"]
+        same_y = abs(a["spans"][0]["origin"][1] - b["spans"][0]["origin"][1]) <= 1.0
+        tail = "".join(sp["text"] for sp in b["spans"]).strip()
+        if same_y and re.fullmatch(r"\d{1,3}", tail) and b["bbox"][0] > a["bbox"][2]:
+            return [_leader_sub(reg, c[0], b["bbox"][0] - 2.0, "left", a, segments[0], 0),
+                    _leader_sub(reg, b["bbox"][0] - 2.0, b["bbox"][2], "right", b,
+                                segments[1], -1)]
+        return None
+
+    # Dạng A: một line, một span, khe bằng space ở giữa.
+    if len(reg["lines"]) != 1:
+        return None
+    m = LEADER_GAP_RE.search(reg["source_text"])
+    if not m or not re.fullmatch(r"\d{1,3}", m.group(2)):
+        return None
+
+    line = reg["lines"][0]
+    right = line["bbox"][2]                       # mép phải nét mực = chỗ số trang kết thúc
+    size = line["spans"][0]["size"]
+    key, _ = pack.key_for(role_style(reg, reg["target_runs"][-1]["role"]))
+    tail_w = pack.font(key).text_length(segments[1], fontsize=size)
+    cut = right - tail_w - 4.0                    # ranh giới hai cột
+    if cut <= line["bbox"][0] + 4.0:              # không còn chỗ cho tiêu đề
+        return None
+    return [_leader_sub(reg, c[0], cut, "left", line, segments[0], 0),
+            _leader_sub(reg, cut, right, "right", line, segments[1], -1)]
+
+
+def _leader_sub(reg: dict, x0: float, x1: float, align: str, line: dict,
+                seg: str, run_i: int) -> dict:
+    c = reg["container"]
+    sub = dict(reg)
+    sub["container"] = [x0, c[1], x1, c[3]]
+    sub["alignment"] = align
+    sub["lines"] = [{**line, "bbox": [max(line["bbox"][0], x0), line["bbox"][1],
+                                      min(line["bbox"][2], x1), line["bbox"][3]]}]
+    sub["target_runs"] = [{"role": reg["target_runs"][run_i]["role"], "text": seg}]
+    sub["column_index"] = 0 if run_i == 0 else 1
+    return sub
 
 
 def fit_region(reg: dict, pack: FontPack, cfg: dict,
@@ -778,6 +852,13 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                     "TABLE_ROW_COLUMNS", "P2", STAGE,
                     f"hàng bảng gộp {len(subs)} cột — vẽ mỗi cột tại x nguồn của nó",
                     page=pno, region_id=reg["region_id"]))
+            if not subs and reg.get("target_runs"):
+                subs = leader_split(reg, pack)
+                if subs:
+                    issues.append(make_issue(
+                        "LEADER_COLUMNS", "P2", STAGE,
+                        "dòng mục lục tách tiêu đề / số trang — số trang neo lại mép phải "
+                        "như bản gốc", page=pno, region_id=reg["region_id"]))
             expanded += subs or [reg]
         regs = expanded
 

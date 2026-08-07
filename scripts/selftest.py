@@ -817,6 +817,37 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── dòng mục lục tách tiêu đề / số trang (1.9.13) ───────────────────────
+# Dòng mục lục là hai cột nằm trong một region; tokenize bỏ khe space nên cụm co lại rồi bị
+# căn giữa/phải, đè lên nét gạch dẫn.
+def _toc_reg(lines, runs, rtype="paragraph"):
+    return {"region_type": rtype, "rotation": 0, "container": [45.7, 152.5, 414.9, 169.7],
+            "source_text": "x", "lines": lines, "target_runs": runs}
+
+
+_two = [{"bbox": [45.7, 152.5, 232.7, 168.2],
+         "spans": [{"origin": [45.7, 164.1], "text": "2 Interface ", "size": 11.0}]},
+        {"bbox": [374.5, 152.7, 380.6, 167.7],
+         "spans": [{"origin": [374.5, 164.1], "text": "  9", "size": 11.0}]}]
+_subs = _fp.leader_split(_toc_reg(_two, [{"role": "emphasis", "text": "Tiêu đề"},
+                                         {"role": "body", "text": "\n9"}]), _fp.FontPack())
+check("mục lục: hai line cùng y = hai cột, tách được",
+      _subs is not None and len(_subs) == 2, str(_subs is None))
+check("mục lục: cột số trang căn phải đúng mép nguồn",
+      _subs and _subs[1]["alignment"] == "right"
+      and abs(_subs[1]["container"][2] - 380.6) < 0.01)
+check("mục lục: ghép run bằng '' — target hai run vẫn ra đúng hai cột",
+      _subs and _subs[0]["target_runs"][0]["text"] == "Tiêu đề"
+      and _subs[1]["target_runs"][0]["text"] == "9")
+check("mục lục: đuôi không phải số trang thì không tách",
+      _fp.leader_split(_toc_reg(
+          [_two[0], {"bbox": [374.5, 152.7, 380.6, 167.7],
+                     "spans": [{"origin": [374.5, 164.1], "text": " xyz", "size": 11.0}]}],
+          [{"role": "body", "text": "a\nb"}]), _fp.FontPack()) is None)
+check("mục lục: ô bảng để column_split lo, không đụng",
+      _fp.leader_split(_toc_reg(_two, [{"role": "body", "text": "a\nb"}], "table_cell"),
+                       _fp.FontPack()) is None)
+
 # ── vùng bảo vệ đo theo nét mực, không theo bbox có đệm space (1.9.12) ──
 # Ca thật V5 Series p10: ô nhãn một hàng bảng là 26 ký tự space, bbox rộng 123pt, "bảo vệ"
 # chỗ trống rỗng và ép mask của ô kề bên cắt ngắn → chữ nguồn còn nguyên, bản dịch vẽ chồng.
