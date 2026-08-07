@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.4"
+  version: "1.9.5"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.4 (engine `1.9.4`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.5 (engine `1.9.5`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -275,6 +275,25 @@ metadata:
 > lại code: `qa_gates.py` vẫn đo `identical` và `lang_suspect` **riêng từng loại, mỗi loại
 > 5%, nối bằng `or`** — quyết định đó **chưa bao giờ được cài đặt**, vẫn hở tới 1.9.4. Nay
 > ghi đúng thực trạng thay vì nói đã sửa.
+> **1.9.5** Gate 3 **nhánh keep** hết báo giả P0. Nhánh translate đã được cấp lối thoát từ
+> 1.4.5 ("23/23 P0 của gate này là báo giả"); nhánh keep vẫn so chuỗi theo **thứ tự đọc**,
+> sót nguyên lớp lỗi đó tới 1.9.4. Vùng keep engine **không đụng tới**, nên câu hỏi duy nhất
+> là chữ còn hay mất — thứ tự và dấu cách của chuỗi trích xuất không trả lời được câu đó.
+> Ca thật 2026-08-07, HV48100 user manual p15, callout `1\n2`: trích xuất trong đúng khung
+> cho `'2 1'` ở **CẢ `source.pdf` lẫn `draft.pdf`** — tức bản gốc cũng trượt chính phép kiểm
+> này, bằng chứng đủ để kết luận báo giả. `G3_KEEP_LOST` là **P0 không waive được**
+> (`approve.py`), nên một job sạch 565/565 vùng đứng chết ở đó.
+> Nay xếp bậc như nhánh translate: khớp nguyên văn hoặc khớp sau khi bỏ khoảng trắng → sạch;
+> **còn đủ ký tự nhưng khác thứ tự → `G3_KEEP_REORDERED` P2** kèm lời nhắc đối chiếu bằng
+> mắt; **thiếu ký tự thật → `G3_KEEP_LOST` P0**, và nay in ra đúng những ký tự thiếu thay vì
+> chỉ nói "mất text". Phép so đặt trong `char_deficit()` — multiset ký tự, cố ý bỏ qua thứ
+> tự lẫn khoảng trắng, và **chỉ** dùng cho câu hỏi còn/mất; bố cục vẫn là việc của Gate 4.
+> Đo trước khi chốt trên **255 vùng keep của 4 job còn `regions.json`**: 254 khớp nguyên như
+> cũ, **đúng 1 ca chuyển P0 → P2, 0 ca đang P0 bị hạ thành sạch**. Luật không nới lỏng chỗ
+> nào khác: hàng xóm lọt vào khung clip cũng không che nổi ký tự thiếu (`'1 2'` vs `'2 4'`
+> vẫn báo thiếu `'1'`), và thiếu một trong hai ký tự trùng nhau vẫn bị bắt vì đếm theo bội.
+> Không đụng layout, không đụng `region_id`, không đụng bản dịch — job cũ chỉ cần chạy lại
+> stage 7.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

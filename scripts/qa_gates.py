@@ -7,6 +7,7 @@ RENDERED → NEEDS_REVIEW | AUTO_QA_PASS. Chạy: python3 qa_gates.py --job <job
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import os
 import re
@@ -37,6 +38,16 @@ def nospace(s: str) -> str:
     chỗ ("từ xa" → "từxa"), tuy chữ vẽ ra vẫn đủ và đúng vị trí.
     """
     return WS_RE.sub("", unicodedata.normalize("NFC", s))
+
+
+def char_deficit(want: str, got: str) -> collections.Counter:
+    """Ký tự của `want` mà `got` không có đủ — rỗng nghĩa là chữ còn nguyên.
+
+    Chỉ dùng cho câu hỏi "chữ còn hay mất", KHÔNG dùng để chấm bố cục: phép so này bỏ qua
+    thứ tự lẫn khoảng trắng. Thứ tự đọc do PDF quyết định và không ổn định — cùng một khung
+    có thể trả '2 1' cho nội dung viết '1\\n2', ở cả bản gốc lẫn bản dịch.
+    """
+    return collections.Counter(nospace(want)) - collections.Counter(nospace(got))
 
 
 def rect_of(fr_line: dict, size: float) -> pymupdf.Rect:
@@ -167,15 +178,33 @@ def run_gates(job: Job) -> None:
         g3_fail += 1
         gi("G3_TARGET_NOT_FOUND", "P0", f"target không thấy trong output: {want[:60]!r}",
            page=reg["page"], region_id=reg["region_id"])
+    # Vùng keep không bị engine đụng tới, nên câu hỏi duy nhất là chữ còn hay mất — thứ tự
+    # và dấu cách của chuỗi trích xuất KHÔNG nói lên điều đó. Cùng lớp lỗi mà nhánh
+    # translate ở trên đã được cấp lối thoát từ 1.4.5, sót lại ở đây tới 1.9.4.
+    # Ca thật 2026-08-07, HV48100 manual p15, callout `1\n2`: trích xuất trong đúng khung
+    # cho '2 1' ở CẢ source.pdf lẫn draft.pdf — tức bản gốc cũng trượt chính phép kiểm này,
+    # bằng chứng đủ để coi là báo giả. Đo trên 255 vùng keep của 4 job có regions.json:
+    # 254 khớp nguyên như cũ, đúng 1 ca chuyển P0 → P2, 0 ca đang P0 bị hạ thành sạch.
     for r in regions.values():
         if r["translation_action"] == "keep" and r["page"] in painted_pages \
                 and r["source_text"].strip():
             clip = pymupdf.Rect(r["container"]) + (-2, -2, 2, 2)
             got = norm(draft[r["page"]].get_text("text", clip=clip))
-            if norm(r["source_text"]) not in got:
-                g3_fail += 1
-                gi("G3_KEEP_LOST", "P0", f"keep-region mất text: {r['source_text'][:50]!r}",
+            want = norm(r["source_text"])
+            if want in got or nospace(want) in nospace(got):
+                continue
+            missing = char_deficit(want, got)
+            if not missing:
+                gi("G3_KEEP_REORDERED", "P2",
+                   f"keep-region còn đủ chữ trong khung nhưng thứ tự trích xuất khác — "
+                   f"đối chiếu bằng mắt: {r['source_text'][:50]!r}",
                    page=r["page"], region_id=r["region_id"])
+                continue
+            g3_fail += 1
+            gi("G3_KEEP_LOST", "P0",
+               f"keep-region mất text: {r['source_text'][:50]!r} — thiếu ký tự: "
+               f"{''.join(sorted(missing.elements()))[:20]!r}",
+               page=r["page"], region_id=r["region_id"])
     for pno in painted_pages:
         ptxt = draft[pno].get_text("text")
         if "�" in ptxt:

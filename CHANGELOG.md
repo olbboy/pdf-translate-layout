@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.5] - 2026-08-07
+
+### Fixed
+
+- **Gate 3's `keep` branch no longer raises false P0s.** The `translate` branch
+  was given an escape hatch in 1.4.5 ("23/23 of this gate's P0s were false
+  alarms"); the `keep` branch kept comparing strings in *reading order* and so
+  carried that whole class of bug through 1.9.4. A `keep` region is never touched
+  by the engine, so the only question worth asking is whether its glyphs survived
+  — and neither the order nor the spacing of the extracted string answers that.
+
+  Real case, 2026-08-07, an HV48100 user manual: a `1\n2` callout extracts as
+  `'2 1'` inside its own container box in **both `source.pdf` and `draft.pdf`** —
+  the original document fails the very same check, which settles it. Because
+  `G3_KEEP_LOST` is a P0 and P0s cannot be waived, a job with 565/565 clean
+  regions could not be released.
+
+  The branch is now tiered like the `translate` one: exact match, or match after
+  stripping whitespace, passes; **all characters present but in a different order
+  → `G3_KEEP_REORDERED` (P2)** with a note to check it by eye; **characters
+  actually missing → `G3_KEEP_LOST` (P0)**, which now names the missing
+  characters instead of just saying text was lost. The comparison lives in
+  `char_deficit()` — a character multiset that deliberately ignores order and
+  whitespace, used **only** for the survived-or-not question; geometry remains
+  Gate 4's job.
+
+  Measured before landing, over **255 keep regions across the 4 jobs that still
+  have a `regions.json`**: 254 match exactly as before, **exactly 1 case moves
+  P0 → P2, and 0 cases drop from P0 to clean**. Nothing else loosens: a neighbour
+  bleeding into the clip box cannot mask a missing character (`'1 2'` against
+  `'2 4'` still reports `'1'` missing), and losing one of two identical
+  characters is still caught, because the count is a multiset.
+
+  No layout change, no `region_id` change, no translation change — existing jobs
+  only need stage 7 re-run.
+
 ## [1.9.4] - 2026-08-07
 
 ### Changed

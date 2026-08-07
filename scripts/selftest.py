@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import os
 import re
 import unicodedata
@@ -815,6 +816,23 @@ if _gb:
 check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
+
+# ── Gate 3 nhánh keep: chữ còn hay mất, không phải thứ tự (1.9.5) ───────
+# Vùng keep engine không đụng tới, nên chuỗi trích xuất lệch thứ tự chỉ nói lên thứ tự đọc
+# của PDF chứ không nói mất chữ. Ca thật HV48100 manual p15: callout `1\n2` trích ra '2 1'
+# ở CẢ bản gốc lẫn bản dịch — bản gốc trượt chính phép kiểm này.
+check("keep: khớp nguyên văn thì không thiếu ký tự",
+      not _qg.char_deficit("Port 1", "Port 1"))
+check("keep: lệch thứ tự đọc vẫn đủ chữ (ca HV48100 p15)",
+      not _qg.char_deficit("1\n2", "2 1"))
+check("keep: lệch dấu cách vẫn đủ chữ",
+      not _qg.char_deficit("Link 0", "Link0"))
+check("keep: hàng xóm lọt vào khung không che được chữ thiếu",
+      _qg.char_deficit("1 2", "2 4") == collections.Counter({"1": 1}))
+check("keep: mất hẳn thì báo đúng ký tự thiếu",
+      _qg.char_deficit("ALM", "") == collections.Counter({"A": 1, "L": 1, "M": 1}))
+check("keep: thiếu một trong hai ký tự trùng nhau vẫn bị bắt",
+      _qg.char_deficit("11", "1") == collections.Counter({"1": 1}))
 
 # ── tổng kết ────────────────────────────────────────────────────────────
 # PHẢI là thứ cuối cùng trong file. Trước 1.8.0 khối này nằm giữa file, nên ~100 case
