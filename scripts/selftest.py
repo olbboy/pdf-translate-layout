@@ -882,6 +882,64 @@ check("mục lục: đuôi không phải số trang thì không tách",
           [_two[0], {"bbox": [374.5, 152.7, 380.6, 167.7],
                      "spans": [{"origin": [374.5, 164.1], "text": " xyz", "size": 11.0}]}],
           [{"role": "body", "text": "a\nb"}]), _fp.FontPack()) is None)
+# ── gạch dẫn mục lục gõ bằng DẤU CHẤM (1.9.22) ─────────────────────────
+# HV48100 gõ gạch dẫn bằng ký tự `.` ngay trong text (85 chấm/dòng) chứ không vẽ line-art như
+# V5, nên `leader_run` không thấy gì. Model giữ nguyên xấp xỉ số chấm cũ trong khi tiêu đề
+# tiếng Việt dài ngắn khác → cột số trang răng cưa: biên độ mép phải 1.8pt → 23.3pt.
+def _dot_reg(target, nlines=1):
+    return {"lines": [{"bbox": [39.7, 123.7, 374.8, 137.4],
+                       "spans": [{"origin": [39.7, 133.9]}]}] * nlines,
+            "target_runs": [{"role": "body", "text": target}], "placeholders": {}}
+
+
+_dr1 = _dot_reg("1 Thông tin an toàn ..................... 5")
+_tk1 = _fp.tokenize(_dr1)
+check("gạch dẫn chấm: bắt đúng token dãy chấm",
+      _fp.dot_leader_token(_dr1, _tk1) == len(_tk1) - 2
+      and set(_tk1[-2]["text"]) == {"."}, str([t["text"] for t in _tk1[-3:]]))
+# Dấu chấm dính liền tiêu đề thì phải tách ra, nếu không cả cụm bị đo như một từ.
+_dr2 = _dot_reg("3. Vận chuyển và lưu kho................... 18")
+_tk2 = _fp.tokenize(_dr2)
+_i2 = _fp.dot_leader_token(_dr2, _tk2)
+check("gạch dẫn chấm: tách dãy chấm dính liền tiêu đề",
+      _i2 == len(_tk2) - 2 and set(_tk2[_i2]["text"]) == {"."}
+      and _tk2[_i2 - 1]["text"] == "kho", str([t["text"] for t in _tk2[-3:]]))
+check("gạch dẫn chấm: đuôi không phải số trang thì bỏ",
+      _fp.dot_leader_token(*(lambda r: (r, _fp.tokenize(r)))(
+          _dot_reg("Mục nào đó ................... xong"))) is None)
+check("gạch dẫn chấm: số quá dài không phải số trang",
+      _fp.dot_leader_token(*(lambda r: (r, _fp.tokenize(r)))(
+          _dot_reg("Mã sản phẩm ................... 480100"))) is None)
+check("gạch dẫn chấm: region nhiều dòng không đụng",
+      _fp.dot_leader_token(*(lambda r: (r, _fp.tokenize(r)))(
+          _dot_reg("1 Thông tin an toàn ......... 5", nlines=2))) is None)
+# Đo đầu-cuối: dòng phải kết thúc đúng mép phải dòng NGUỒN, sai lệch dưới một dấu chấm.
+_toc_full = {"page": 2, "region_type": "paragraph", "rotation": 0, "alignment": "left",
+             "source_text": "1 Safety Information..... 5",
+             "bbox": [39.7, 123.7, 374.8, 137.4],
+             "container": [39.67, 123.71, 414.95, 138.71],
+             "lines": [{"bbox": [39.7, 123.7, 374.8, 137.4],
+                        "spans": [{"origin": [39.7, 133.9], "text": "x", "size": 8.0}]}],
+             "runs": [{"text": "1 Safety Information..... 5", "bold": False, "italic": False,
+                       "serif": False, "mono": False, "size": 8.0, "color": 0,
+                       "font": "ArialMT", "role": "body"}],
+             "target_runs": [{"role": "body", "text": "1 Thông tin an toàn ....... 5"}]}
+_frd, _ = _fp.fit_region(dict(_toc_full), _fp.FontPack(), _default_cfg)
+_end = _frd and (_frd["lines"][0]["x"] + _frd["lines"][0]["width"])
+check("gạch dẫn chấm: dòng kết thúc đúng mép phải dòng nguồn",
+      _frd is not None and len(_frd["lines"]) == 1 and 371.0 <= _end <= 374.9,
+      str(_end))
+# Gate 3 so chuỗi nguyên văn. Số chấm vẽ ra cố ý khác `target_text`, nên fit_paint PHẢI khai
+# ra và gate phải chuẩn hoá đúng vùng đã khai — không khai thì gate bắn P0 hàng loạt (đã xảy
+# ra: 47 P0 trên HV48100).
+check("gạch dẫn chấm: fit_result khai số chấm đã phát lại",
+      _frd is not None and _frd.get("dot_leader", 0) > _fp.DOT_LEADER_MIN,
+      str(_frd and _frd.get("dot_leader")))
+check("gạch dẫn chấm: Gate 3 chỉ chuẩn hoá vùng đã khai",
+      'want, got = DOTS_RE.sub("....", want), DOTS_RE.sub("....", got)' in open(
+          os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "qa_gates.py"),
+          encoding="utf-8").read())
+
 check("mục lục: ô bảng để column_split lo, không đụng",
       _fp.leader_split(_toc_reg(_two, [{"role": "body", "text": "a\nb"}], "table_cell"),
                        _fp.FontPack()) is None)

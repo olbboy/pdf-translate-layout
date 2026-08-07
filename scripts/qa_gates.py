@@ -25,6 +25,7 @@ from preflight import merge_rects
 
 STAGE = "qa"
 WS_RE = re.compile(r"\s+")
+DOTS_RE = re.compile(r"\.{4,}")   # dãy gạch dẫn mục lục, độ dài do fit_paint quyết định
 
 
 def norm(s: str) -> str:
@@ -161,6 +162,11 @@ def run_gates(job: Job) -> None:
         clip = pymupdf.Rect(reg.get("container_paint") or reg["container"]) + (-2, -2, 2, slack)
         got = norm(draft[reg["page"]].get_text("text", clip=clip))
         want = norm(reg["target_text"])
+        # Dòng mục lục có dãy chấm được fit_paint phát lại cho thẳng cột số trang (1.9.22):
+        # số chấm vẽ ra CỐ Ý khác `target_text`. Thu mọi dãy chấm về một dạng ở CẢ hai vế,
+        # và chỉ ở đúng những region đã khai — phần chữ vẫn phải khớp nguyên văn.
+        if pr.get("dot_leader"):
+            want, got = DOTS_RE.sub("....", want), DOTS_RE.sub("....", got)
         if not want or want in got:
             continue
         # Gate 3 đo ĐỘ PHỦ: bản dịch có lên được trang không. Hình học là việc của Gate 4.
@@ -170,6 +176,8 @@ def run_gates(job: Job) -> None:
         # thật trên trang. Thiếu hẳn chữ mới là P0; lệch khung hạ xuống P2 để reviewer đối
         # chiếu cùng cảnh báo hình học của Gate 4.
         page_txt = norm(draft[reg["page"]].get_text())
+        if pr.get("dot_leader"):
+            page_txt = DOTS_RE.sub("....", page_txt)
         if want in page_txt or nospace(want) in nospace(page_txt):
             gi("G3_TARGET_OUTSIDE_BOX", "P2",
                f"target có trên trang nhưng ngoài khung container — xem G4 cùng region: "

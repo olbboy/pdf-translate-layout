@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.21"
+  version: "1.9.22"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.21 (engine `1.9.21`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.22 (engine `1.9.22`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -498,6 +498,23 @@ metadata:
 > ngay trước nó theo chiều ngang VÀ có baseline **thấp hơn** nó chưa tới một dòng — ký hiệu mũ
 > được nâng lên, nên thiếu vế sau thì `[3]` của `Cycle Life` dán ngược lên `DC Breaker` ở hàng
 > trên. Không tìm được chủ thì để nguyên. Đo trên các job: đúng 4 vùng, đều ở V5 p6.
+> **1.9.22** gạch dẫn mục lục gõ bằng **DẤU CHẤM** được phát lại cho thẳng cột số trang.
+> HV48100 không vẽ line-art như V5 mà gõ 85 dấu `.` ngay trong text, nên `leader_run` (1.9.18)
+> đi tìm stroke không thấy gì và `leader_split` (1.9.13) đòi khe ≥4 space cũng không khớp. Hệ
+> quả NGƯỢC với V5: không có chữ đè lên nét, nhưng model giữ nguyên xấp xỉ số chấm cũ (85 →
+> 86) trong khi tiêu đề tiếng Việt dài ngắn khác — cột số trang răng cưa.
+> Dãy chấm co về tối thiểu TRƯỚC khi fit (cỡ chữ phải do tiêu đề và số trang quyết định, không
+> do dãy chấm thừa của bản gốc), rồi phát lại đúng số chấm để dòng kết thúc ở **mép phải dòng
+> nguồn**. Chữ ký: region một dòng, token cuối là số trang 1-3 chữ số, token liền trước kết
+> thúc bằng ≥4 dấu chấm; chấm dính liền tiêu đề thì tách ra. Đo trên mọi job: **54 dòng, đều
+> là mục lục HV48100 p3-p4, 0 ca oan**. Biên độ mép phải: **23.3 → 4.3pt** (p3), **17.1 →
+> 2.9pt** (p4); nguồn là 1.8 và 1.5pt. Phần dư còn lại đúng bằng một dấu chấm — hệ quả của
+> phép làm tròn xuống, không phải lệch.
+> Hoàn toàn là chữ: không xoá, không vẽ vector, nên Gate 5 không phải khai báo gì. Gate 3 thì
+> có: nó so chuỗi target nguyên văn, mà số chấm vẽ ra cố ý khác `target_text`. `fit_result`
+> khai số chấm đã phát lại, gate thu dãy chấm về một dạng ở cả hai vế **đúng những region đã
+> khai** — chỗ khác không được nới. Thiếu khai báo thì gate bắn **47 P0**, và đó chính là cách
+> lỗi này bị bắt.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

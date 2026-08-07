@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.22] - 2026-08-07
+
+### Fixed
+
+- **A contents leader typed as DOTS is regenerated so the page numbers line up.**
+  HV48100 does not draw line art the way V5 does; it types 85 `.` characters
+  straight into the text, so `leader_run` (1.9.18) finds no strokes and
+  `leader_split` (1.9.13), which wants a gap of 4+ spaces, does not match either.
+  The symptom is the opposite of V5's: nothing overprints the leader, but the
+  model reproduces roughly the original dot count (85 → 86) while the Vietnamese
+  title has a different length, so the page-number column comes out ragged.
+
+  The dot run is shrunk to a minimum *before* fitting — the font size has to be
+  decided by the title and the page number, not by the source's leftover dots —
+  and then regenerated so the line ends at the **source line's right edge**.
+  Signature: single-line region, last token a 1-3 digit page number, the token
+  before it ending in 4+ dots; dots glued to the title are split off. Measured
+  across the jobs on hand: **54 rows, all on the HV48100 contents pages, no false
+  positives**. Right-edge spread: **23.3 → 4.3pt** (p3) and **17.1 → 2.9pt** (p4),
+  against 1.8 and 1.5pt in the source. What is left is one dot width — the effect
+  of rounding down, not drift.
+
+  Text only: nothing erased, no vector drawn, so Gate 5 needs no declaration.
+  Gate 3 does need one: it compares the target string verbatim, and the painted
+  dot count deliberately differs from `target_text`. The fit result declares the
+  regenerated count, and the gate collapses dot runs on both sides for exactly
+  those regions — nothing else is relaxed. Without that declaration the gate
+  fires 47 P0s, which is how the omission was caught.
+
 ## [1.9.21] - 2026-08-07
 
 ### Fixed

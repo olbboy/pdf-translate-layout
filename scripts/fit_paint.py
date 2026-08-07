@@ -541,6 +541,38 @@ def _leader_sub(reg: dict, x0: float, x1: float, align: str, line: dict,
     return sub
 
 
+DOT_TAIL_RE = re.compile(r"^(.*?)(\.{4,})$")
+DOT_LEADER_MIN = 4        # dãy chấm ngắn hơn ngần này thì không phải gạch dẫn
+
+
+def dot_leader_token(reg: dict, tokens: list) -> int | None:
+    """Chỉ số token là dãy dấu CHẤM gạch dẫn của dòng mục lục, hoặc None. Có thể tách token.
+
+    Vì sao cần: mục lục HV48100 gõ gạch dẫn bằng ký tự `.` ngay trong text — 85 dấu chấm
+    trong một dòng — chứ không vẽ line-art như V5. `leader_run` (1.9.18) đi tìm stroke nên
+    không thấy gì, `leader_split` (1.9.13) đòi khe ≥4 space nên cũng không khớp. Hệ quả
+    ngược với V5: không có chữ đè lên nét, nhưng model giữ nguyên xấp xỉ số chấm cũ (85 →
+    86) trong khi tiêu đề tiếng Việt dài ngắn khác tiếng Anh, nên cột số trang răng cưa —
+    đo trên HV48100: biên độ mép phải nguồn 1.8pt, bản dịch **23.3pt**.
+
+    Chữ ký: region MỘT dòng, token cuối là số trang 1-3 chữ số, token liền trước kết thúc
+    bằng ≥4 dấu chấm. Dấu chấm dính liền tiêu đề thì tách ra thành token riêng.
+    """
+    if len(reg["lines"]) != 1 or len(tokens) < 3:
+        return None
+    tail = tokens[-1]["text"].strip()
+    if not (tail.isdigit() and len(tail) <= 3):
+        return None
+    m = DOT_TAIL_RE.match(tokens[-2]["text"])
+    if not m:
+        return None
+    head, dots = m.groups()
+    if head:
+        tokens[-2] = {**tokens[-2], "text": head}
+        tokens.insert(len(tokens) - 1, {**tokens[-2], "text": dots, "br": False})
+    return len(tokens) - 2
+
+
 LEADER_MAX_H = 1.2        # nét gạch dẫn mỏng hơn ngần này mới coi là gạch dẫn
 LEADER_MAX_GAP = 12.0     # và phải bắt đầu trong ngần này sau mép chữ nguồn
 LEADER_MIN_LEN = 8.0      # đoạn gạch còn lại ngắn hơn ngần này thì thôi, đừng vẽ
@@ -618,6 +650,13 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     tokens = tokenize(reg)
     if not tokens:
         return None, [("EMPTY_TOKENS", "P1", "target không có token")]
+    # Dãy chấm gạch dẫn co lại còn tối thiểu TRƯỚC khi fit: cỡ chữ phải do tiêu đề và số
+    # trang quyết định, không do dãy chấm thừa của bản gốc. Phát lại đúng số chấm sau khi
+    # biết cỡ chữ.
+    dots_at = (dot_leader_token(reg, tokens)
+               if cfg.get("layout", {}).get("dot_leader", True) else None)
+    if dots_at is not None:
+        tokens[dots_at]["text"] = "." * DOT_LEADER_MIN
 
     for fname in {SUBSET_PREFIX_RE.sub("", r["font"]) for r in reg["runs"]}:
         if fname and not any(k in fname.lower() for k in KNOWN_FAMILIES):
@@ -809,6 +848,26 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         code = "FONT_RATIO_HARD" if ratio < 0.90 else "FONT_RATIO_REVIEW"
         issues.append((code, "P1", f"ratio={ratio:.2%} (src {src_size}pt → {s_fit:.2f}pt)"))
 
+    # Phát lại dãy chấm cho dòng kết thúc đúng mép phải dòng NGUỒN — toạ độ lấy từ nguồn,
+    # không phải engine tự đặt. Chỉ áp cho dòng căn trái một dòng: đó là hình dạng duy nhất
+    # của dòng mục lục gõ bằng dấu chấm.
+    dot_leader_n = 0
+    if dots_at is not None and align == "left" and len(best["lines"]) == 1:
+        idxs0 = best["lines"][0]
+        lw0 = (sum(best["widths"][i] for i in idxs0)
+               + sum(best["space_ws"][i] for i in idxs0[:-1]))
+        dot_w = pack.font(tok_font[dots_at]).text_length(".", fontsize=s_fit)
+        if dot_w > 0:
+            n = DOT_LEADER_MIN + int((reg["lines"][0]["bbox"][2] - base_x - lw0) // dot_w)
+            if n > DOT_LEADER_MIN:
+                tokens[dots_at]["text"] = "." * n
+                refit = layout_at(s_fit)
+                if refit is not None and len(refit["lines"]) == 1:
+                    best = refit
+                    dot_leader_n = n
+                else:                       # không vừa thì trả về dãy tối thiểu
+                    tokens[dots_at]["text"] = "." * DOT_LEADER_MIN
+
     # dựng line segments với alignment + sub-run theo font
     leading = leading_ratio * s_fit
     baselines = line_baselines(best.get("line_seg") or [0] * len(best["lines"]),
@@ -855,6 +914,9 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     return {"size": round(s_fit, 2), "src_size": round(src_size, 2),
             "ratio": round(ratio, 4), "leading": round(leading, 2),
             "alignment": align, "rotation": reg["rotation"],
+            # Gate 3 so chuỗi nguyên văn, mà dãy chấm đã bị phát lại — phải khai ra để gate
+            # chuẩn hoá đúng vùng này, không nới lỏng phép so cho vùng khác.
+            **({"dot_leader": dot_leader_n} if dot_leader_n else {}),
             "lines": out_lines}, issues
 
 
@@ -1171,6 +1233,7 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                 "region_id": reg["region_id"], "page": pno, **{k: fr[k] for k in
                 ("size", "src_size", "ratio", "alignment", "rotation")},
                 **({"column": reg["column_index"]} if "column_index" in reg else {}),
+                **({"dot_leader": fr["dot_leader"]} if "dot_leader" in fr else {}),
                 "line_count": len(fr["lines"]),
                 "fonts": sorted({s["font"] for l in fr["lines"] for s in l["segments"]}),
             })
