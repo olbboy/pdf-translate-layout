@@ -12,7 +12,8 @@ import math
 import re
 
 from _common import (RERUNNABLE_STATUSES, BlockingError, Job, append_jsonl, exit_blocking,
-                     load_glossary, load_json, make_issue, nfc, save_json, utc_now)
+                     load_glossary, load_json, make_issue, nfc, save_json, spec_cell_text,
+                     utc_now)
 
 STAGE = "translate_prep"
 PH = "⟦{}⟧"  # ⟦TOKEN⟧
@@ -36,10 +37,18 @@ MEAS_RE = re.compile(r"(?<![\w])(\d+(?:[.,]\d+)?\s?(?:°C|°F|mm2|mm²|mm|cm|kWh
 MODEL_RE = re.compile(r"\b(?:[A-Z]{1,4}\d+[A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*|Ø\s?\d+(?:mm)?)\b")
 
 
-def protect(text: str, keep_terms: list[str]) -> tuple[str, dict]:
-    """Thay typed tokens bằng placeholder ⟦TYPE_N⟧ (spec §6.5). Trả (masked, map)."""
-    mapping: dict[str, str] = {}
-    counters: dict[str, int] = {}
+def protect(text: str, keep_terms: list[str],
+            mapping: dict | None = None, counters: dict | None = None) -> tuple[str, dict]:
+    """Thay typed tokens bằng placeholder ⟦TYPE_N⟧ (spec §6.5). Trả (masked, map).
+
+    `mapping`/`counters` dùng chung cho nhiều lần gọi liên tiếp: mask từng Ô của lưới thông
+    số theo thứ tự đọc phải ra ĐÚNG số hiệu token như mask cả region một lượt, nếu không gợi
+    ý trong `source_warnings` sẽ mang số hiệu khác `source_text` và model chép nhầm.
+    Đúng được vì ô nằm theo thứ tự nguồn và ngăn nhau bằng khoảng trắng — không mẫu nào bị
+    cắt ngang ranh giới ô, và bộ đếm mỗi loại vẫn tăng theo thứ tự xuất hiện.
+    """
+    mapping = {} if mapping is None else mapping
+    counters = {} if counters is None else counters
 
     def sub_all(pattern: re.Pattern, ttype: str, s: str) -> str:
         def repl(m):
@@ -171,6 +180,25 @@ def prep(job: Job) -> None:
                 "gạch dưới ('________') ở đúng chỗ cần điền — engine sẽ xoá gạch của bản "
                 "gốc và để dãy gạch dưới của bạn chảy theo chữ. Thiếu ô trống thì biểu mẫu "
                 "hết dùng được.")
+        cells = reg.get("spec_cells") or []
+        if cells:
+            # Chữ của ô phải mang ĐÚNG số hiệu placeholder như `source_text`: mask lại từng ô
+            # theo thứ tự đọc với bộ đếm dùng chung. Số hiệu lệch một chỗ thôi là model chép
+            # nhầm token và stage 5 báo PLACEHOLDER_MISMATCH.
+            cmap, ccnt, cmasked = {}, {}, []
+            for c in cells:
+                cmasked.append(protect(spec_cell_text(reg, c), keep_terms, cmap, ccnt)[0])
+            if any(mapping.get(k) != v for k, v in cmap.items()):
+                cmasked = []        # bất biến thứ tự hỏng → bỏ gợi ý, giữ phần đếm
+            grid = ("\n".join(f"  {i + 1}. [{'trái' if c['col'] == 0 else 'phải'}] {t}"
+                              for i, (c, t) in enumerate(zip(cells, cmasked)))
+                    if cmasked else "  (không in được lưới — bám theo thứ tự dòng nguồn)")
+            warnings.append(
+                f"Region này là KHỐI HAI CỘT mà bản gốc căn bằng dãy space, engine "
+                f"đã đo được lưới: {len(cells)} ô. Bản dịch phải có ĐÚNG {len(cells)} đoạn "
+                f"ngăn bằng '\\n', theo thứ tự đọc trái→phải rồi xuống hàng, mỗi đoạn một ô — "
+                f"engine đặt từng đoạn vào đúng cột của nó. Lưới nguồn:\n" + grid
+                + "\nGộp hai ô vào một đoạn sẽ làm cả khối dồn về cột trái.")
 
         # context per spec §6.6
         idx = reg["reading_index"]
@@ -305,6 +333,10 @@ Quy tắc bắt buộc (validator sẽ reject nếu vi phạm):
    cuối được dịch bình thường. Vi phạm → P1 `CONSISTENCY_ENTITY`.
 7. `\n` trong text của target run = explicit line break (xuống dòng cứng); dùng khi
    cần giữ cấu trúc dòng như label/value hoặc danh sách trong một cell.
+7a. **Bảng thông số hai cột** — khi `source_warnings` báo region có lưới N ô, bản dịch phải
+   có ĐÚNG N đoạn ngăn bằng `\n`, theo đúng thứ tự lưới in trong cảnh báo. Đây là hợp đồng
+   đếm, không phải gợi ý: lệch số đoạn thì engine bỏ lưới và cả bảng dồn về một cột trái.
+   Gộp nhiều run thì tổng số đoạn của các run cộng lại mới là N. Sai → P1 `SPEC_GRID_DROPPED`.
 7b. **`context.chain_source`** (nếu có) là TRỌN câu/cụm mà region này chỉ là một mảnh —
    PDF xé chữ theo dòng chứ nội dung không đứt ở đó. Đọc hết chuỗi, dịch cả cụm trong
    đầu, rồi ghi phần thuộc về region đang xử lý (`chain_position` cho biết mảnh thứ mấy).

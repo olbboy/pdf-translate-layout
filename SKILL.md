@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.30"
+  version: "1.9.31"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.30 (engine `1.9.30`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.31 (engine `1.9.31`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -596,6 +596,39 @@ metadata:
 > cạnh. Nay vật cản là chữ dịch cùng trang (`share_gap`, khớp theo identity) chỉ chặn tới
 > GIỮA khe, lùi thêm `SIBLING_GAP_PT` = 1.0pt mỗi bên. Vật cản cố định (ảnh, vector, nét kẻ)
 > vẫn chặn tới đúng mép.
+> **1.9.31** **khối hai cột căn bằng dãy space** được vẽ đúng lưới (`spec_grid_cells` ở
+> `_common.py`, `spec_grid` ở `fit_paint.py`). Tờ rơi datasheet dàn bảng thông số bằng dãy
+> space chứ không kẻ khung, nên `find_tables` không thấy bảng và cả khối rơi vào MỘT region
+> `paragraph`; `tokenize` bỏ sạch khoảng trắng, `fit_region` vẽ mọi dòng từ `base_x`, và
+> `line_baselines` có luật `max(neo, trước + leading)` nên ô trị số không bao giờ nằm cạnh ô
+> nhãn được. Cả bảng dồn về một cột trái mà **mọi gate vẫn xanh** — không gate nào đo cấu
+> trúc cột. Đo trên cả bốn datasheet Pytes: bản nào cũng dính.
+> `column_split` (1.9.0) không phủ được: nó chốt `table_cell` và dựng cho MỘT hàng nhiều cột,
+> còn đây là khối nhiều hàng.
+> Bằng chứng lưới là **phiếu bầu neo cột** (`spec_row_votes`): mỗi hàng đo khe mực rộng nhất,
+> khe ≥ `SPEC_MIN_PAD_PT` (12pt) và cách mép mực trái vùng ≥ `SPEC_MIN_GAP_PT` (30pt) thì mép
+> mực ngay sau khe là ứng viên; ít nhất `SPEC_MIN_ANCHOR_ROWS` (2) hàng **cùng trang** phải
+> đồng thuận. Phiếu gom theo TRANG chứ không theo vùng, vì một lưới hay bị cắt thành nhiều
+> region: ba nhãn tính năng của tờ rơi mỗi cái là một region MỘT dòng, tự nó không lặp lại
+> được gì, nhưng ba cái cùng bầu một x thì lưới là có thật. Vùng chỉ nhận lưới khi CHÍNH NÓ
+> có phiếu ở neo đó.
+> Mọi phép đo ở mức **KÝ TỰ**, không phải span: hai cột hay nằm chung một span khi cùng font
+> cùng cỡ, và bbox của span tính cả dãy space đệm nên đo theo span ra khe 0 ở đúng những hàng
+> gõ nhãn và trị số trong một dòng — cùng lớp lỗi 1.8.0/1.9.6/1.9.12 đã sửa từng phần.
+> **Hợp đồng với bản dịch:** mỗi đoạn ngăn bằng `\n` là một ô, trái→phải rồi xuống hàng.
+> Stage 3 in lưới đo được vào `source_warnings` (mask lại từng ô bằng bộ đếm dùng chung của
+> `protect`, nếu không số hiệu placeholder lệch và model chép nhầm), stage 5 bắn **P1
+> `SPEC_GRID_DROPPED`** khi lệch số đoạn, stage 6 lùi về hành vi một cột chứ không đoán.
+> Dòng mục lục cùng hình dạng nhưng thuộc `leader_split`/`dot_leader` — cột phải toàn số
+> nguyên 1-3 chữ số thì loại.
+> Đo trước khi chốt: **0 báo oan trên 2578 vùng** của năm tài liệu đã phát hành, **0 region_id
+> mất/mới, 0 source_hash đổi**; trên bốn datasheet fire đúng **16 vùng, tất cả là lưới thật**.
+> `spec_cells` là **metadata thuần** như `fill_rules`/`bullet_lines` — job cũ chỉ cần chạy lại
+> stage 2 → 7, response không mồ côi.
+> Kèm sửa `target_segments`: run là đơn vị **style**, không phải đơn vị đoạn. Idiom
+> `"\n".join(run.text)` chèn thêm một ranh giới đoạn giữa mỗi cặp run, nên target có tiêu đề
+> in đậm + phần còn lại bị đếm thừa đoạn. Ranh giới đoạn nằm trong CHỮ; role của đoạn lấy theo
+> run mở đầu nó.
 
 > **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
 > `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`

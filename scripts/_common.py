@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.9.30"
+ENGINE_VERSION = "1.9.31"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
@@ -135,6 +135,159 @@ def fill_in_rules(reg: dict, page_rules: list) -> list:
         if left and right:
             hits.append([x0, y0, x1, y1])
     return hits
+
+
+SPEC_COL_X_TOL = 3.0       # hai hàng coi là cùng một neo cột khi mép mực lệch dưới ngần này
+SPEC_ROW_Y_TOL = 2.0       # hai span cùng một hàng khi baseline lệch dưới ngần này
+SPEC_MIN_ANCHOR_ROWS = 2   # neo cột phải phải có mặt ở ít nhất ngần này HÀNG cùng trang
+SPEC_MIN_GAP_PT = 30.0     # và cách mép trái vùng ít nhất ngần này
+SPEC_MIN_PAD_PT = 12.0     # khe ngăn cột phải rộng ít nhất ngần này
+PAGE_NUM_RE = re.compile(r"\d{1,3}")   # cột phải toàn số kiểu này = dòng mục lục
+
+
+SPEC_TYPES = ("paragraph", "figure_caption", "list_item")
+
+
+def _spec_rows(reg: dict):
+    """→ (baseline từng hàng, [(li, si, ci, char)] ký tự CÓ MỰC, mép mực trái vùng) hoặc None.
+
+    Đơn vị đo là KÝ TỰ, không phải span: nhãn tính năng hai cột của tờ rơi nằm gọn trong MỘT
+    span (hai cột cùng font cùng cỡ, ngăn nhau bằng dãy space giữa span), nên đo theo span
+    thì cả hàng chỉ có một mốc và không khe nào đo được.
+    """
+    if reg.get("region_type") not in SPEC_TYPES or reg.get("rotation") != 0:
+        return None
+    lines = reg.get("lines") or []
+    ink = [(li, si, ci, ch)
+           for li, ln in enumerate(lines)
+           for si, sp in enumerate(ln.get("spans") or [])
+           for ci, ch in enumerate(sp.get("chars") or [])
+           if not ch.get("c", "").isspace()]
+    if not ink:
+        return None
+    rows: list[float] = []
+    for _, _, _, ch in ink:
+        y = ch["origin"][1]
+        if not any(abs(y - r) <= SPEC_ROW_Y_TOL for r in rows):
+            rows.append(y)
+    rows.sort()
+    return rows, ink, min(ch["bbox"][0] for *_, ch in ink)
+
+
+def _row_of(rows: list, y: float) -> int:
+    return min(range(len(rows)), key=lambda k: abs(y - rows[k]))
+
+
+def spec_row_votes(reg: dict) -> list[float]:
+    """Ứng viên neo cột của từng HÀNG: mép mực ngay sau khe mực rộng nhất của hàng đó.
+
+    Mỗi hàng bỏ đúng một phiếu. Cụm ký tự rời rạc bên trong một ô (`0°C~45°C(32°F~113°F)`)
+    vì thế không dựng nổi neo giả — đo trên HV48100 BMU: luật "x lặp ở ≥3 hàng" cho 7 neo
+    ứng viên, luật khe cho 1.
+    """
+    got = _spec_rows(reg)
+    if not got:
+        return []
+    rows, ink, left = got
+    out = []
+    for r in range(len(rows)):
+        cur = sorted((ch["bbox"][0], ch["bbox"][2])
+                     for *_, ch in ink if _row_of(rows, ch["origin"][1]) == r)
+        best, at, reach = 0.0, None, cur[0][1]
+        for x0, x1 in cur[1:]:
+            if x0 - reach > best:
+                best, at = x0 - reach, x0
+            reach = max(reach, x1)
+        if at is not None and best >= SPEC_MIN_PAD_PT and at - left >= SPEC_MIN_GAP_PT:
+            out.append(at)
+    return out
+
+
+def spec_grid_cells(reg: dict, page_votes=()) -> tuple[list[dict], float] | None:
+    """Khối hai cột căn bằng space → ([ô theo thứ tự đọc], x neo cột phải), hoặc None.
+
+    Tờ rơi datasheet dàn bảng thông số bằng **dãy space** chứ không kẻ khung, nên
+    `find_tables` không thấy bảng và cả khối rơi vào MỘT region `paragraph`. `tokenize` bỏ
+    sạch khoảng trắng, `fit_region` vẽ mọi dòng từ `base_x`, và `line_baselines` có luật
+    `max(neo, trước + leading)` nên ô trị số không bao giờ nằm cạnh ô nhãn được — cả bảng
+    dồn về một cột trái. Ca thật: trang thông số của cả bốn datasheet Pytes.
+
+    `column_split` (1.9.0) không cứu được: nó chốt `table_cell` và dựng cho MỘT hàng nhiều
+    cột, còn đây là khối NHIỀU hàng.
+
+    Bằng chứng để coi là lưới thật chứ không phải thụt lề là **phiếu bầu neo cột**
+    (`spec_row_votes`): ít nhất `SPEC_MIN_ANCHOR_ROWS` hàng CÙNG TRANG phải trỏ vào một x.
+    Phiếu tính trên cả trang chứ không riêng trong vùng, vì cùng một lưới hay bị cắt thành
+    nhiều region: ba nhãn tính năng của tờ rơi mỗi cái là một region MỘT dòng, tự nó không
+    lặp lại được gì, nhưng ba cái cùng bầu một x thì lưới là có thật. Vùng chỉ nhận lưới khi
+    CHÍNH NÓ có phiếu ở neo đó — trang có lưới không biến mọi vùng thành lưới.
+
+    Ô là một dải KÝ TỰ `[li, si, c0, c1)`, không phải cả span: hai cột hay nằm chung một span
+    khi cùng font cùng cỡ.
+
+    Fail-closed ở mọi chỗ mơ hồ: hai neo cùng thắng, hoặc một hàng có mực trái chờm qua mực
+    phải, thì trả None — engine không đoán lưới.
+    """
+    got = _spec_rows(reg)
+    if not got:
+        return None
+    rows, ink, _ = got
+    mine = spec_row_votes(reg)
+    if not mine:
+        return None
+
+    votes = list(page_votes) or list(mine)
+    tally = [(x, sum(1 for v in votes if abs(v - x) <= SPEC_COL_X_TOL)) for x in set(mine)]
+    top = max(n for _, n in tally)
+    winners = [x for x, n in tally if n == top]
+    if top < SPEC_MIN_ANCHOR_ROWS or max(winners) - min(winners) > SPEC_COL_X_TOL:
+        return None
+    anchor = min(winners)
+
+    # Gom ký tự thành dải liền mạch theo (hàng, cột, span). Cột phải = mọi ký tự có mực từ
+    # neo trở đi, không riêng ký tự ĐÚNG tại neo: một trị số trải dài về bên phải.
+    cells: dict[tuple[int, int], list] = {}
+    for li, si, ci, ch in ink:
+        key = (_row_of(rows, ch["origin"][1]),
+               1 if ch["bbox"][0] >= anchor - SPEC_COL_X_TOL else 0)
+        cur = cells.setdefault(key, [])
+        # Nới dải qua cả khoảng trắng nằm giữa: chữ trong một ô cách nhau bằng dấu cách bình
+        # thường, bỏ chúng thì `spec_cell_text` ra "ControllerWorkingVoltage". Một span bị
+        # cắt nhiều nhất một lần (tại neo) nên dải vẫn liền mạch theo thứ tự đọc.
+        if cur and cur[-1][0] == li and cur[-1][1] == si:
+            cur[-1][3] = ci + 1
+        else:
+            cur.append([li, si, ci, ci + 1])
+    right = [k for k in cells if k[1] == 1]
+    if not right:
+        return None
+
+    # Dòng MỤC LỤC cũng là hai cột căn bằng space, nhưng cột phải chỉ có số trang và
+    # `leader_split`/`dot_leader` đã lo đúng ca đó — nhận nhầm ở đây sẽ giành mất chúng.
+    # Chữ ký hẹp: cột phải toàn số nguyên 1-3 chữ số. Trị số thật luôn mang đơn vị hoặc dấu.
+    if all(PAGE_NUM_RE.fullmatch(spec_cell_text(reg, {"spans": cells[k]})) for k in right):
+        return None
+
+    # Hai cột phải TÁCH BẠCH trên mọi hàng: mực của ô trái phải dừng trước ô phải. Chồng lấn
+    # nghĩa là neo cắt ngang một cụm chữ liền mạch — đó là thụt lề chứ không phải lưới.
+    def ink_x(k):
+        box = [reg["lines"][li]["spans"][si]["chars"][c]["bbox"]
+               for li, si, c0, c1 in cells[k] for c in range(c0, c1)]
+        return min(b[0] for b in box), max(b[2] for b in box)
+
+    for r in range(len(rows)):
+        if (r, 0) in cells and (r, 1) in cells \
+                and ink_x((r, 0))[1] > ink_x((r, 1))[0] + SPEC_COL_X_TOL:
+            return None
+    return ([{"row": r, "col": c, "spans": cells[(r, c)]}
+             for r, c in sorted(cells)], anchor)
+
+
+def spec_cell_text(reg: dict, cell: dict) -> str:
+    """Chữ nguồn của một ô — dùng cho cảnh báo stage 3 và thông điệp validate."""
+    lines = reg["lines"]
+    return "".join(lines[li]["spans"][si]["text"][c0:c1]
+                   for li, si, c0, c1 in cell["spans"]).strip()
 
 
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

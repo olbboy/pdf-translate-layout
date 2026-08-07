@@ -1511,6 +1511,113 @@ check("keep: thiếu một trong hai ký tự trùng nhau vẫn bị bắt",
 # PHẢI là thứ cuối cùng trong file. Trước 1.8.0 khối này nằm giữa file, nên ~100 case
 # thêm sau nó (context graph, gộp đoạn, chốt RELEASED, hướng nới dự phòng) in "FAIL"
 # mà tiến trình vẫn thoát 0 và dòng tổng kết vẫn nói ALL PASS.
+# ── spec_grid: khối hai cột căn bằng space (engine 1.9.31) ────────────────────────────
+# Hình học rút gọn từ trang thông số HV48100: nhãn ở x=60, trị số ở x=320, ba hàng.
+from _common import spec_cell_text as _sct, spec_grid_cells as _sgc, spec_row_votes as _srv
+from fit_paint import spec_grid as _sg, target_segments as _tsg
+
+
+def _chars(text, x0, y, w=6.0):
+    out, x = [], x0
+    for ch in text:
+        out.append({"c": ch, "origin": [x, y], "bbox": [x, y - 8, x + w, y + 2]})
+        x += w
+    return out
+
+
+def _sp(text, x0, y):
+    cs = _chars(text, x0, y)
+    return {"text": text, "origin": [x0, y], "size": 10.0, "font": "F", "color": 0,
+            "bbox": [x0, y - 8, cs[-1]["bbox"][2], y + 2], "chars": cs}
+
+
+def _line(*spans):
+    return {"bbox": [spans[0]["bbox"][0], spans[0]["bbox"][1],
+                     spans[-1]["bbox"][2], spans[-1]["bbox"][3]], "spans": list(spans)}
+
+
+def _spec_reg(lines, tgt="", rtype="paragraph", container=(55, 100, 580, 200)):
+    runs = [{"text": "".join(s["text"] for l in lines for s in l["spans"]),
+             "role": "body", "size": 10.0, "font": "F", "color": 0}]
+    return {"region_type": rtype, "rotation": 0, "container": list(container),
+            "lines": lines, "runs": runs,
+            "target_runs": [{"role": "body", "text": tgt}] if tgt else []}
+
+
+# Ba hàng nhãn/trị số; hàng 2 gõ nhãn và trị số trong MỘT span có dãy space ở giữa.
+_L1 = _line(_sp("Cell Type", 60, 120), _sp("LFP", 320, 120))
+_L2 = _line(_sp("Nominal Energy" + " " * 30 + "5.12kWh", 60, 140))
+_L3 = _line(_sp("Weight", 60, 160), _sp("43 kg", 320, 160))
+_SPEC = [_L1, _L2, _L3]
+
+_reg_spec = _spec_reg(_SPEC)
+_got = _sgc(_reg_spec)
+check("spec_grid_cells: ba hàng hai cột → 6 ô", _got is not None and len(_got[0]) == 6,
+      str(_got and len(_got[0])))
+check("spec_grid_cells: neo cột đúng mép mực trị số",
+      _got is not None and abs(_got[1] - 320) < 1.0, str(_got and _got[1]))
+check("spec_grid_cells: ô cắt giữa span vẫn ra đúng chữ",
+      _got is not None and [_sct(_reg_spec, c) for c in _got[0]]
+      == ["Cell Type", "LFP", "Nominal Energy", "5.12kWh", "Weight", "43 kg"],
+      str(_got and [_sct(_reg_spec, c) for c in _got[0]]))
+
+# Guard: một hàng đơn độc không dựng nổi lưới (ngưỡng phiếu).
+check("spec_grid_cells: một hàng không đủ phiếu", _sgc(_spec_reg([_L1])) is None)
+# Guard: cột phải toàn số trang → dòng mục lục, để leader_split lo.
+_TOC = [_line(_sp("Chuong mot", 60, 120), _sp("10", 320, 120)),
+        _line(_sp("Chuong hai", 60, 140), _sp("11", 320, 140)),
+        _line(_sp("Chuong ba", 60, 160), _sp("12", 320, 160))]
+check("spec_grid_cells: mục lục (cột phải toàn số trang) bị loại",
+      _sgc(_spec_reg(_TOC)) is None)
+# Guard: khe từ thường không phải ranh giới cột.
+_PROSE = [_line(_sp("mot hai ba bon nam sau bay", 60, 120)),
+          _line(_sp("tam chin muoi mot hai ba", 60, 140)),
+          _line(_sp("bon nam sau bay tam chin", 60, 160))]
+check("spec_grid_cells: văn xuôi không khe rộng thì không có lưới",
+      _sgc(_spec_reg(_PROSE)) is None)
+# Guard: bảng có kẻ khung là việc của column_split, không phải của lưới space.
+check("spec_grid_cells: table_cell không nhận lưới space",
+      _sgc(_spec_reg(_SPEC, rtype="table_cell")) is None)
+
+# Phiếu bầu gom theo TRANG: hai region một dòng cùng neo thì dựng được lưới,
+# còn tự mỗi region thì không.
+_C1 = _spec_reg([_line(_sp("Higher Energy Density", 60, 120),
+                       _sp("Lower Resistive Losses", 320, 120))])
+_C2 = _spec_reg([_line(_sp("Superior Performance", 60, 160),
+                       _sp("Remote Upgrading", 320, 160))])
+_pv = _srv(_C1) + _srv(_C2)
+check("spec_row_votes: mỗi hàng bỏ đúng một phiếu", len(_pv) == 2, str(_pv))
+check("spec_grid_cells: nhãn một dòng cần phiếu cả trang mới thành lưới",
+      _sgc(_C1) is None and _sgc(_C1, _pv) is not None)
+
+# spec_grid (stage 6) — hợp đồng đếm và khung ô.
+_reg_fit = _spec_reg(_SPEC, "Loai cell\nLFP\nDien nang danh dinh\n5.12kWh\nKhoi luong\n43 kg")
+_reg_fit["spec_cells"], _reg_fit["spec_anchor_x"] = _got[0], _got[1]
+_subs_spec = _sg(_reg_fit)
+check("spec_grid: 6 ô → 6 sub-region", _subs_spec is not None and len(_subs_spec) == 6)
+check("spec_grid: ô trái dừng ở neo, ô phải chạy tới mép khung",
+      _subs_spec is not None
+      and [round(s["container"][2], 1) for s in _subs_spec[:2]] == [round(_got[1], 1), 580.0],
+      str(_subs_spec and [s["container"][2] for s in _subs_spec[:2]]))
+# Ô số 4 là trị số của hàng gõ liền trong MỘT span: origin của span đó nằm ở x=60 (đầu
+# nhãn), mực của trị số bắt đầu sau dãy space. Vẽ từ origin là dồn về cột trái.
+check("spec_grid: base_x ô phải là mép mực, không phải origin có đệm space",
+      _subs_spec is not None and _subs_spec[3]["lines"][0]["bbox"][0] >= _got[1] - 1.0,
+      str(_subs_spec and _subs_spec[3]["lines"][0]["bbox"][0]))
+check("spec_grid: ô không được tự nới khung",
+      _subs_spec is not None and all(s.get("no_expand") for s in _subs_spec))
+_reg_bad = dict(_reg_fit, target_runs=[{"role": "body", "text": "gop het vao mot doan"}])
+check("spec_grid: lệch số đoạn thì bỏ lưới (fail-closed)", _sg(_reg_bad) is None)
+
+# target_segments: ranh giới đoạn nằm trong CHỮ, không phải giữa hai run.
+_TWO_RUNS = {"target_runs": [{"role": "emphasis", "text": "A"},
+                             {"role": "body", "text": "B\nC"}]}
+check("target_segments: hai run không tự sinh thêm đoạn",
+      [t for t, _ in _tsg(_TWO_RUNS)] == ["AB", "C"])
+check("target_segments: role lấy theo run MỞ ĐẦU đoạn",
+      [r for _, r in _tsg(_TWO_RUNS)] == ["emphasis", "body"])
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

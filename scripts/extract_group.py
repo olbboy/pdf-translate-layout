@@ -15,7 +15,8 @@ import pymupdf
 import build_context_graph as _cg
 from _common import (RERUNNABLE_STATUSES, BlockingError, Job, exit_blocking, fill_in_rules,
                      horizontal_rules, layout_model_for, load_json, make_issue, nfc,
-                     save_json, sha256_text, utc_now, vertical_rules)
+                     save_json, sha256_text, spec_grid_cells, spec_row_votes, utc_now,
+                     vertical_rules)
 
 STAGE = "extract_group"
 DIR_TO_ROT = {(1, 0): 0, (0, -1): 90, (-1, 0): 180, (0, 1): 270}
@@ -728,6 +729,8 @@ def extract(job: Job) -> None:
         obstacles_all = img_boxes + draw_boxes
         page_hrules = horizontal_rules(page)
         page_draw = page.get_drawings()
+        # Phiếu bầu neo cột gom theo TRANG: cùng một lưới hay bị cắt thành nhiều region.
+        page_votes = [v for r in ordered for v in spec_row_votes(r)]
         for idx, reg in enumerate(ordered):
             if "container" not in reg:
                 others = [r["bbox"] for r in ordered if r is not reg]
@@ -746,6 +749,12 @@ def extract(job: Job) -> None:
                 bl = bullet_lines(reg, page_draw)
                 if bl:
                     reg["bullet_lines"] = bl
+            # Lưới thông số hai cột căn bằng space — cũng là metadata thuần. Đặt ở stage 2 vì
+            # stage 3 (cảnh báo cho model), stage 5 (kiểm số ô) và stage 6 (dựng sub-region)
+            # đều phải nói về CÙNG một lưới; tính lại ở ba nơi là ba cơ hội lệch nhau.
+            sg = spec_grid_cells(reg, page_votes)
+            if sg:
+                reg["spec_cells"], reg["spec_anchor_x"] = sg[0], round(sg[1], 2)
             qx, qy = int(reg["container"][0] // 8), int(reg["container"][1] // 8)
             reg["region_id"] = f"{fp8}/p{pno}/{reg['region_type']}/{qx}_{qy}/{idx}"
             reg["reading_index"] = idx

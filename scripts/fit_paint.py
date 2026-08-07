@@ -421,7 +421,7 @@ def expandable_region(reg: dict) -> bool:
     """Region một dòng được phép nới khung: tiêu đề, nhãn hình, và hai ca bị extract xếp
     nhầm — tiêu đề đánh số thành `list_item` (LIST_RE khớp `"5."` trong `"5.1.1 …"`), nhãn
     ngắn cạnh hình thành `paragraph` (ca thật: `Dry Contact` ở Lite p13)."""
-    if reg["rotation"] != 0 or len(reg["lines"]) != 1:
+    if reg.get("no_expand") or reg["rotation"] != 0 or len(reg["lines"]) != 1:
         return False
     t = reg["source_text"].strip()
     if reg["region_type"] in EXPANDABLE_TYPES:
@@ -504,6 +504,120 @@ def column_split(reg: dict) -> list[dict] | None:
         sub["container"] = [min(c[0], cx), c[1], right, c[3]]
         sub["target_runs"] = [{"role": reg["target_runs"][0]["role"], "text": segments[k]}]
         sub["column_index"] = k
+        subs.append(sub)
+    return subs
+
+
+def target_segments(reg: dict) -> list[tuple[str, str]]:
+    """[(chữ, role)] của từng đoạn ngăn bằng "\\n", nối qua mọi target run.
+
+    Không dùng `"\\n".join(run.text)`: run là đơn vị STYLE, không phải đơn vị đoạn. Nối bằng
+    "\\n" sẽ chèn thêm một ranh giới đoạn giữa mỗi cặp run, nên target có tiêu đề in đậm +
+    phần còn lại bị đếm thừa đoạn. Ranh giới đoạn nằm trong CHỮ, ranh giới run thì không —
+    role của đoạn lấy theo run mở đầu đoạn đó.
+    """
+    segs: list[list] = [["", reg["target_runs"][0]["role"] if reg["target_runs"] else "body"]]
+    for run in reg["target_runs"]:
+        parts = run["text"].split("\n")
+        segs[-1][0] += parts[0]
+        for p in parts[1:]:
+            segs.append([p, run["role"]])
+    return [(t, r) for t, r in segs]
+
+
+def _runs_for_spans(reg: dict, cell_spans: list) -> list[dict] | None:
+    """Các run nguồn phủ đúng những dải ký tự đã cho, hoặc None nếu offset không khớp.
+
+    `make_region` dựng `runs` từ CHÍNH danh sách span của region theo thứ tự, nên nối chữ hai
+    bên phải bằng nhau — cắt run theo offset ký tự là phép chiếu chính xác, không phải dò
+    theo chuỗi. Lệch độ dài nghĩa là bất biến đó đã hỏng: trả None, không đoán.
+    """
+    lines = reg["lines"]
+    off, pos = {}, 0
+    for li, ln in enumerate(lines):
+        for si, sp in enumerate(ln["spans"]):
+            off[(li, si)] = pos
+            pos += len(sp["text"])
+    if pos != sum(len(r["text"]) for r in reg["runs"]):
+        return None
+    want = sorted((off[(li, si)] + c0, off[(li, si)] + c1) for li, si, c0, c1 in cell_spans)
+    out, rpos = [], 0
+    for r in reg["runs"]:
+        a, b = rpos, rpos + len(r["text"])
+        rpos = b
+        piece = "".join(r["text"][max(a, s) - a:min(b, e) - a]
+                        for s, e in want if s < b and e > a)
+        if piece:
+            out.append({**r, "text": piece})
+    return out or None
+
+
+def _cell_line(line: dict, si: int, c0: int, c1: int) -> dict:
+    """Dòng con chỉ chứa dải ký tự `[c0, c1)` của span `si`, bbox bó đúng nét mực của nó.
+
+    Giữ bbox và span của dòng gốc thì chúng trải hết hàng, và `ink_base_x` — vốn lấy
+    `max(origin, bbox[0])` để chặn side-bearing âm — không nâng nổi origin có đệm space lên
+    mép mực: ô trị số bị vẽ tụt vào giữa hàng, đè lên nhãn. `build_masks` cũng đọc bbox này,
+    giữ bbox gốc thì mỗi ô mask cả hàng.
+    """
+    sp = line["spans"][si]
+    chars = sp["chars"][c0:c1]
+    ink = [c["bbox"] for c in chars if not c["c"].isspace()] or [c["bbox"] for c in chars]
+    x0, x1 = min(b[0] for b in ink), max(b[2] for b in ink)
+    sub = {**sp, "text": sp["text"][c0:c1], "chars": chars,
+           "origin": [x0, sp["origin"][1]], "bbox": [x0, sp["bbox"][1], x1, sp["bbox"][3]]}
+    return {**line, "spans": [sub], "bbox": [x0, line["bbox"][1], x1, line["bbox"][3]]}
+
+
+def spec_grid(reg: dict) -> list[dict] | None:
+    """Bảng thông số hai cột căn bằng space → một sub-region cho mỗi Ô; None nếu không phải ca đó.
+
+    Lưới do stage 2 đo và ghi vào `reg["spec_cells"]` (xem `spec_grid_cells`) — ở đây chỉ
+    dựng khung vẽ, không đo lại: stage 3 hứa với model bao nhiêu ô thì stage 6 phải đặt đúng
+    ngần ấy ô, nếu không hợp đồng đếm là vô nghĩa.
+
+    Hợp đồng với bản dịch: mỗi đoạn ngăn bằng "\\n" ứng với một ô, theo thứ tự đọc trái→phải
+    rồi xuống hàng. Lệch số đoạn → None, giữ nguyên hành vi cũ (dồn một cột); stage 5 đã bắn
+    P1 `SPEC_GRID_DROPPED` để người dịch sửa, engine không tự đoán.
+
+    Khung mỗi ô cao đúng MỘT hàng — từ mép trên hàng tới mép trên hàng kế. Ngân sách chật thế
+    khiến `fit_region` thu cỡ chữ để giữ một dòng thay vì tràn xuống hàng dưới, và nếu vẫn
+    không vừa ở sàn `minimum_ratio` thì bắn `FIT_IMPOSSIBLE` — báo to còn hơn đè chữ lên hàng
+    kế mà không ai thấy.
+    """
+    cells = reg.get("spec_cells")
+    if not cells or reg["rotation"] != 0 or not reg.get("target_runs"):
+        return None
+    segs = target_segments(reg)
+    if len(segs) != len(cells):
+        return None
+
+    lines, c = reg["lines"], reg["container"]
+    anchor = reg["spec_anchor_x"]
+    rows = sorted({cell["row"] for cell in cells})
+    top = {r: min(lines[li]["bbox"][1] for cell in cells if cell["row"] == r
+                  for li, *_ in cell["spans"]) for r in rows}
+    subs = []
+    for (text, role), cell in zip(segs, cells):
+        runs = _runs_for_spans(reg, cell["spans"])
+        if runs is None:
+            return None
+        r = cell["row"]
+        nxt = [q for q in rows if q > r]
+        sub = dict(reg)
+        sub["lines"] = [_cell_line(lines[li], si, c0, c1)
+                        for li, si, c0, c1 in cell["spans"]]
+        sub["runs"] = runs
+        sub["container"] = [min(l["bbox"][0] for l in sub["lines"]),
+                            top[r],
+                            anchor if cell["col"] == 0 else c[2],
+                            top[nxt[0]] if nxt else c[3]]
+        sub["alignment"] = "left"
+        sub["target_runs"] = [{"role": role, "text": text}]
+        sub["column_index"] = cell["col"]
+        # Ô đã bị hàng xóm trong lưới khoá bốn phía; nới khung ở đây chỉ đè lên ô bên cạnh.
+        # `expand_container` không thấy điều đó vì bbox của region cha bị lọc khỏi vật cản.
+        sub["no_expand"] = True
         subs.append(sub)
     return subs
 
@@ -1202,12 +1316,24 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         # và Gate 3/4 vẫn chấm theo khung cha — tách chỉ là chuyện nội bộ của paint.
         expanded: list[dict] = []
         for reg in regs:
-            subs = column_split(reg) if reg.get("target_runs") else None
+            subs = spec_grid(reg) if reg.get("target_runs") else None
             if subs:
                 issues.append(make_issue(
-                    "TABLE_ROW_COLUMNS", "P2", STAGE,
-                    f"hàng bảng gộp {len(subs)} cột — vẽ mỗi cột tại x nguồn của nó",
+                    "SPEC_GRID_COLUMNS", "P2", STAGE,
+                    f"bảng thông số hai cột — vẽ {len(subs)} ô tại đúng cột và hàng nguồn",
                     page=pno, region_id=reg["region_id"]))
+            elif reg.get("spec_cells") and reg.get("target_runs"):
+                issues.append(make_issue(
+                    "SPEC_GRID_DROPPED", "P1", STAGE,
+                    f"bản dịch không khớp lưới {len(reg['spec_cells'])} ô — vẽ dồn về một "
+                    "cột trái như bản gốc không có", page=pno, region_id=reg["region_id"]))
+            if not subs:
+                subs = column_split(reg) if reg.get("target_runs") else None
+                if subs:
+                    issues.append(make_issue(
+                        "TABLE_ROW_COLUMNS", "P2", STAGE,
+                        f"hàng bảng gộp {len(subs)} cột — vẽ mỗi cột tại x nguồn của nó",
+                        page=pno, region_id=reg["region_id"]))
             if not subs and reg.get("target_runs"):
                 subs = leader_split(reg, pack)
                 if subs:

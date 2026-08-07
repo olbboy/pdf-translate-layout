@@ -206,7 +206,7 @@ def validate(job: Job) -> None:
     auth = authenticity_cfg(cfg)
     target_lang = cfg["languages"]["target"]
     issues: list[dict] = []
-    n_ok = n_fail = n_drift = n_neg = n_sym = n_trunc = n_carry = 0
+    n_ok = n_fail = n_drift = n_neg = n_sym = n_trunc = n_carry = n_spec = 0
     seen: set[str] = set()
     # Authenticity theo TRẠNG THÁI CUỐI của từng region — không đếm theo dòng.
     # Workflow chuẩn cho phép append bản sửa (bản sau ghi đè bản trước): dòng cũ
@@ -307,6 +307,20 @@ def validate(job: Job) -> None:
                 f"ký hiệu <>≤≥± không khớp source — thiếu {smiss} thừa {sextra}; "
                 "lật dấu là đổi thông số kỹ thuật, sửa lại cho khớp",
                 page=reg.get("page"), region_id=rid))
+
+        # Lưới thông số hai cột: hợp đồng là ĐẾM. Bắt ở đây chứ không để stage 6 lặng lẽ
+        # bỏ lưới — stage 6 fail-closed đúng, nhưng hậu quả (cả bảng dồn một cột) là thứ
+        # chỉ mắt người thấy, gate hình học không đo được.
+        n_cells = len(reg.get("spec_cells") or [])
+        if n_cells:
+            got_seg = sum(r["text"].count("\n") for r in runs) + 1
+            if got_seg != n_cells:
+                n_spec += 1
+                issues.append(make_issue(
+                    "SPEC_GRID_DROPPED", "P1", STAGE,
+                    f"bảng thông số hai cột cần {n_cells} đoạn ngăn bằng '\\n', bản dịch có "
+                    f"{got_seg} — engine sẽ bỏ lưới và cả bảng dồn về một cột trái",
+                    page=reg.get("page"), region_id=rid))
 
         # NFC + punctuation allowlist (áp trước khi restore → token nguyên vẹn)
         norm_runs = []
@@ -461,7 +475,8 @@ def validate(job: Job) -> None:
     warn_bits = [f"{k}={v}" for k, v in (("number_drift", n_drift), ("negation_drop", n_neg),
                                           ("symbol_drift", n_sym), ("truncated", n_trunc),
                                           ("carry_through", n_carry),
-                                          ("address_translated", n_entity)) if v]
+                                          ("address_translated", n_entity),
+                                          ("spec_grid_dropped", n_spec)) if v]
     warn_note = (" " + " ".join(warn_bits)) if warn_bits else ""
     print(f"validate: ok={n_ok} fail={n_fail} pending={len(pending)}{warn_note}")
     if n_carry:

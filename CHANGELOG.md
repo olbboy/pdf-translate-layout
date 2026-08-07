@@ -4,6 +4,66 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.31] - 2026-08-07
+
+### Added
+
+- **Two-column blocks aligned with runs of spaces are now painted as a grid**
+  (`spec_grid_cells` in `_common.py`, `spec_grid` in `fit_paint.py`). Marketing datasheets
+  lay their specification tables out with padding spaces instead of ruling lines, so
+  `find_tables` sees no table and the whole block lands in a single `paragraph` region.
+  `tokenize` drops every whitespace token, `fit_region` draws every line from `base_x`, and
+  `line_baselines` enforces `max(anchor, previous + leading)` — so the value cell can never
+  sit beside its label. The whole table collapsed into one left column, and every gate stayed
+  green because none of them measures column structure. Measured on all four Pytes
+  datasheets: the defect was present in every one.
+
+  `column_split` (1.9.0) does not cover this: it is gated on `table_cell` and models **one**
+  row spanning several columns, not a block of many rows.
+
+  Evidence for a real grid is a **column-anchor vote** (`spec_row_votes`): for each row, take
+  the widest ink gap; if it is at least `SPEC_MIN_PAD_PT` (12 pt) and at least
+  `SPEC_MIN_GAP_PT` (30 pt) from the region's left ink edge, the ink starting after that gap
+  is that row's candidate. At least `SPEC_MIN_ANCHOR_ROWS` (2) rows **on the same page** must
+  agree. Votes are tallied per page, not per region, because one grid is often split across
+  regions: the three feature captions of a datasheet are three separate one-line regions that
+  cannot repeat anything on their own, yet all vote for the same x. A region only takes the
+  grid if it holds a vote at that anchor — a page containing a grid does not turn every
+  region into one.
+
+  Every measurement is at **character** level, not span level: two columns often share one
+  span when they use the same font and size, and a span's bbox includes padding spaces, so a
+  span-level gap measures 0 on exactly the rows that type label and value on one line.
+
+  Fail-closed everywhere it is ambiguous — two anchors tied, or a row whose left ink overruns
+  its right ink — returns no grid rather than guessing one.
+
+  Contract with the translation: one `\n`-separated segment per cell, left to right then down.
+  Stage 3 prints the measured grid into `source_warnings` (masked with the region's own
+  placeholder numbering, via the new shared-counter form of `protect`), stage 5 raises P1
+  `SPEC_GRID_DROPPED` when the segment count does not match, and stage 6 falls back to the old
+  single-column behaviour rather than guessing an assignment.
+
+  Table-of-contents lines are the same shape but belong to `leader_split`/`dot_leader`; a
+  right column made only of 1–3 digit integers is excluded.
+
+  Measured before shipping: **0 false positives across 2578 regions** of five released
+  documents (three user manuals, one quick guide, one table-based datasheet), with 0 region
+  ids lost or added and 0 `source_hash` changed. On the four datasheets the rule fires on 16
+  regions, all of them real grids.
+
+  `spec_cells` is pure metadata, like `fill_rules` and `bullet_lines`: `region_id`,
+  `container` and `source_hash` are untouched, so an already-translated job only needs
+  stage 2 → 7 re-run and no response is orphaned.
+
+### Fixed
+
+- **`target_segments` replaces the `"\n".join(runs)` idiom.** A run is a unit of *style*, not
+  a unit of paragraph; joining runs with `"\n"` invents one extra segment boundary per run
+  pair, so any target with a bold lead-in plus body text was counted with too many segments.
+  Segment boundaries live inside the text, and a segment takes the role of the run that opens
+  it.
+
 ## [1.9.30] - 2026-08-07
 
 ### Fixed
