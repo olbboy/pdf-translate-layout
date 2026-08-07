@@ -1095,6 +1095,25 @@ _wide = {"lines": [_pl(29.8, 120.0, "Note"),
 check("thụt lề: thụt vô lý (vùng hai cột) thì bỏ, không ném chữ ra giữa trang",
       _fp.segment_indents(_wide, 29.8, 3) == [0.0] * 3,
       str(_fp.segment_indents(_wide, 29.8, 3)))
+# ── ô trống điền tay là nét LIỀN, gạch dẫn là nét đứt (1.9.27) ─────────
+# `fill_in_rules` nhận nhầm ba dòng mục lục V5 thành ô trống điền tay → `FILL_BLANK_DROPPED`
+# báo giả ở mọi tài liệu có mục lục. Nặng hơn: bản dịch có dãy `____` thì lượt xoá gạch-ô-trống
+# xoá luôn gạch dẫn. Đo trên 5 bản Terms of Warranty: 15-16 nét mảnh mỗi bản, 0 nét đứt.
+from _common import horizontal_rules as _cm_horizontal_rules  # noqa: E402
+
+_doc = _mu.open()
+_pg = _doc.new_page(width=300, height=200)
+_sh = _pg.new_shape(); _sh.draw_line(_mu.Point(40, 100), _mu.Point(200, 100))
+_sh.finish(width=0.7, closePath=False); _sh.commit()
+_sh = _pg.new_shape(); _sh.draw_line(_mu.Point(40, 140), _mu.Point(200, 140))
+_sh.finish(width=0.7, dashes="[1.4 1.4] 0", closePath=False); _sh.commit()
+_hr = _cm_horizontal_rules(_doc[0])
+check("ô trống: nét liền được nhận",
+      any(abs(r[1] - 100) < 1.5 for r in _hr), str(_hr))
+check("ô trống: nét đứt (gạch dẫn mục lục) bị loại",
+      not any(abs(r[1] - 140) < 1.5 for r in _hr), str(_hr))
+_doc.close()
+
 # ── dấu gạch đầu dòng là bằng chứng cấu trúc mạnh nhất (1.9.25) ────────
 # `•` `◇` `∘` của bản gốc là HÌNH VẼ nhỏ, không phải ký tự, nên không nằm trong `lines`.
 # Chúng nói đúng số mục, còn `paragraph_starts` chỉ đoán từ chỗ ngắt dòng và sai ở nguồn

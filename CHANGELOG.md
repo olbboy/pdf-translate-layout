@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.27] - 2026-08-07
+
+### Fixed
+
+- **`horizontal_rules` only accepts SOLID strokes.** A blank someone writes on is
+  always a solid rule; a dashed horizontal stroke in these documents is a
+  **contents-page leader**. Without that condition `fill_in_rules` mistook three V5
+  contents rows for fill-in blanks and `fit_paint` raised `FILL_BLANK_DROPPED` — a
+  false positive a reviewer has to waive on **every** document with a table of
+  contents. Worse: had the translation happened to contain a run of `____`, the
+  blank-rule erasure pass would have deleted the leader as well.
+
+  Measured across the corpus: the 5 Terms of Warranty documents — exactly the kind
+  this feature exists for — carry **15-16 thin horizontal rules each and not one
+  dashed**; the only three dashed ones anywhere are the V5 contents leaders. The
+  guard drops precisely those three false positives and loses no real case. V5 P1
+  goes **23 → 20**, and the waiver list drops from 5 codes to 4.
+
 ## [1.9.26] - 2026-08-07
 
 ### Changed

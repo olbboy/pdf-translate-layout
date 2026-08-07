@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.26"
+  version: "1.9.27"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.26 (engine `1.9.26`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.27 (engine `1.9.27`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -571,6 +571,15 @@ metadata:
 > Gate 6 được khai HỢP khung cũ và mới của từng dấu, cùng cách với gạch dẫn. Gate 5 không đổi
 > vì số cụm vector giữ nguyên (xoá một, vẽ một).
 > Kết quả HV48100: **58 dấu được dời**, trang 8/9/11/19 hết cả đè bullet lẫn nhảy dòng.
+> **1.9.27** `horizontal_rules` chỉ nhận **nét LIỀN**. Ô trống để người điền tay bao giờ cũng
+> là gạch liền; nét đứt ngang trong tài liệu này là **gạch dẫn mục lục**. Thiếu vế đó thì
+> `fill_in_rules` nhận nhầm ba dòng mục lục V5 thành ô trống, `fit_paint` bắn
+> `FILL_BLANK_DROPPED` — báo giả mà reviewer phải waive ở **mọi** tài liệu có mục lục. Nặng
+> hơn: bản dịch tình cờ có dãy `____` thì lượt xoá gạch-ô-trống sẽ xoá luôn gạch dẫn.
+> Đo trên kho: 5 bản Terms of Warranty — đúng loại tài liệu tính năng này sinh ra để phục vụ —
+> có **15-16 nét kẻ ngang mảnh mỗi bản, 0 nét đứt**; ba nét đứt duy nhất trong cả kho là gạch
+> dẫn mục lục V5. Bỏ đúng ba ca oan, không bỏ sót ca thật nào. V5 P1 **23 → 20**, còn 4 mã
+> cần waive thay vì 5.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.9.26"
+ENGINE_VERSION = "1.9.27"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
@@ -86,10 +86,21 @@ FILL_RULE_GAP_TOL = 8.0    # khe cho phép giữa mép chữ và mép gạch
 
 
 def horizontal_rules(page) -> list:
-    """Nét kẻ ngang mảnh trên trang → [(x0, y0, x1, y1)]."""
+    """Nét kẻ ngang mảnh LIỀN trên trang → [(x0, y0, x1, y1)].
+
+    Chỉ nhận nét liền: ô trống để người điền tay bao giờ cũng là gạch liền, còn nét ĐỨT ngang
+    trong tài liệu này là **gạch dẫn mục lục**. Thiếu vế đó thì `fill_in_rules` nhận nhầm ba
+    dòng mục lục V5 thành ô trống và `fit_paint` bắn `FILL_BLANK_DROPPED` — báo giả mà reviewer
+    phải waive ở mọi tài liệu có mục lục. Tệ hơn: nếu bản dịch tình cờ có dãy `____` thì lượt
+    xoá gạch-ô-trống sẽ xoá luôn gạch dẫn.
+    Đo trên kho: 5 bản Terms of Warranty — đúng loại tài liệu tính năng này sinh ra để phục vụ
+    — có **15-16 nét kẻ ngang mảnh mỗi bản, 0 nét đứt**; ba nét đứt duy nhất trong cả kho là
+    gạch dẫn mục lục V5. Chốt này bỏ đúng ba ca oan, không bỏ sót ca thật nào.
+    """
     return [(d["rect"].x0, d["rect"].y0, d["rect"].x1, d["rect"].y1)
             for d in page.get_drawings()
-            if d["rect"].height <= FILL_RULE_MAX_H and d["rect"].width >= FILL_RULE_MIN_W]
+            if d["rect"].height <= FILL_RULE_MAX_H and d["rect"].width >= FILL_RULE_MIN_W
+            and d.get("dashes") in (None, "", "[] 0")]
 
 
 def fill_in_rules(reg: dict, page_rules: list) -> list:
