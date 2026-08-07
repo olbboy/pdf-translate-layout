@@ -1716,6 +1716,43 @@ check("nbsp và ideographic space cũng tính là không có mực",
       _rs(_nbsp_first, "body")["font"] == "ArialMT")
 
 
+# ── role_face: KIỂU CHỮ theo run nhiều mực nhất, MÀU vẫn theo run đầu (engine 1.9.35) ──
+# Ca thật: V16 Lite quick guide mở đầu bằng một dấu `：` font Song rồi 210 ký tự ArialMT —
+# một ký tự quyết định kiểu chữ cả đoạn, bản đã phát hành ra 7,94% ký tự Noto Serif.
+from fit_paint import role_face as _rf
+
+_colon = {"runs": [
+    {"text": "：", "role": "body", "serif": True, "bold": False, "color": 0,
+     "font": "AdobeSongStd-Light"},
+    {"text": "x" * 210, "role": "body", "serif": False, "bold": False, "color": 5789783,
+     "font": "ArialMT"}]}
+check("một ký tự Song không quyết định kiểu chữ cho 210 ký tự Arial",
+      _rf(_colon, "body")["font"] == "ArialMT")
+check("... và không kéo theo cờ serif của nó", _rf(_colon, "body")["serif"] is False)
+
+# Chốt chống nới quá tay: MÀU vẫn theo run đầu có mực. Bảng thông số datasheet có nhãn đen
+# ngắn + giá trị xám dài; lấy màu theo đa số thì nhãn đen hoá xám — 7 vùng đo được.
+check("màu vẫn theo run đầu có mực, không theo run đa số",
+      _rs(_colon, "body")["color"] == 0)
+
+# Hoà số ký tự thì giữ run sớm hơn — quyết định phải ổn định giữa các lượt chạy.
+_tie = {"runs": [
+    {"text": "AAA", "role": "body", "serif": True, "bold": False, "font": "SimSun"},
+    {"text": "BBB", "role": "body", "serif": False, "bold": False, "font": "ArialMT"}]}
+check("hoà số ký tự thì giữ run sớm hơn", _rf(_tie, "body")["font"] == "SimSun")
+
+# Khoảng trắng không được tính vào "nhiều mực nhất".
+_pad = {"runs": [
+    {"text": "Cảnh báo", "role": "body", "serif": True, "bold": True, "font": "SimSun"},
+    {"text": " " * 80, "role": "body", "serif": False, "bold": False, "font": "ArialMT"}]}
+check("run toàn khoảng trắng dù dài vẫn không thắng",
+      _rf(_pad, "body")["font"] == "SimSun")
+
+# Mọi run cùng role đều rỗng → lùi về đúng hành vi của role_style.
+check("không có run nào có mực thì lùi về role_style",
+      _rf(_all_ws, "body")["font"] == "AdobeSongStd-Light")
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

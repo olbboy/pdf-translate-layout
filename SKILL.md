@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.34"
+  version: "1.9.35"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.34 (engine `1.9.34`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.35 (engine `1.9.35`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,25 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.35** **kiểu chữ** của role lấy theo run mang NHIỀU NÉT MỰC NHẤT (`role_face`), còn
+> **màu** vẫn theo run đầu có mực (`role_style`). 1.9.34 tước quyền quyết định của run rỗng,
+> nhưng run có mực mà rất ngắn thì vẫn thắng: V16 Lite quick guide mở đầu bằng **một dấu
+> `：` font `AdobeSongStd-Light`** rồi 210 ký tự `ArialMT` cùng role — một ký tự quyết định
+> kiểu chữ cho cả đoạn. Đo trên bản ĐÃ PHÁT HÀNH: quick guide **7,94%** ký tự Noto Serif,
+> V16 Lite user manual **1,26%**. Cùng cơ chế: dấu `≥` mở đầu ô `≥6000Cycles` của V5
+> datasheet (7 ký tự serif), `(A)` của V5 Series manual.
+> Bản dịch một run phải chọn MỘT kiểu chữ cho cả vùng, nên chọn kiểu phủ được nhiều chữ
+> nguồn nhất là lệch ít nhất. Hoà thì giữ run sớm hơn; khoảng trắng không được tính.
+> **Vì sao tách hàm thay vì nới `role_style`:** hàm đó còn quyết định MÀU. Đo trên kho: đổi
+> màu theo run đa số làm **7 vùng** bảng thông số datasheet kéo nhãn từ đen `#000101` sang
+> xám `#585857` của cột giá trị — kiểu chữ theo đa số là đúng, màu thì không. Hai câu hỏi
+> khác nhau nên thành hai hàm. `key_for` chỉ đọc `mono/serif/bold/italic`, nên đổi này KHÔNG
+> đụng cỡ chữ (37 vùng lệch `size` giữa hai run là vô hại).
+> Phạm vi thật: **serif đổi ở 3 vùng, bold 0 vùng, màu 0 vùng**. Chạy lại V5 datasheet:
+> **0,27% → 0,000%**. V5 Series manual còn 6 ký tự `(A)` size 8 và đó là ĐÚNG — role `body`
+> của ô đó thật sự là Song (hai dấu ngoặc toàn rộng `（）`), chỉ chữ `A` là `emphasis` Arial.
+> **Chỉ đụng stage 6** — job cũ chạy lại stage 6 → 7 là hưởng.
 
 > **1.9.34** `role_style` lấy style của run **ĐẦU TIÊN CÓ NÉT MỰC** khớp role, không lấy
 > run đầu tiên khớp role. Bản gốc hay mở đầu đoạn bằng span khoảng trắng thuộc font khác:

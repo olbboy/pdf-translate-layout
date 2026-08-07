@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.35] - 2026-08-07
+
+### Fixed
+
+- **Typeface for a role now follows the run with the most ink (`role_face`); colour still
+  follows the first inked run (`role_style`).** 1.9.34 stopped blank runs from deciding, but
+  a short *inked* run still won. V16 Lite quick guide opens a region with **a single `：` in
+  `AdobeSongStd-Light`** followed by 210 characters of `ArialMT` in the same role — one
+  character set the typeface for the whole paragraph. Measured on the **released** files:
+  quick guide **7.94%** Noto Serif characters, V16 Lite user manual **1.26%**. Same mechanism
+  behind the `≥` leading `≥6000Cycles` in the V5 datasheet (7 serif characters) and `(A)` in
+  the V5 Series manual.
+
+  A one-run translation must pick a single face for the region, so picking the face that
+  covers the most source characters is the smallest deviation. Ties keep the earlier run;
+  whitespace does not count.
+
+  **Why a separate function instead of widening `role_style`:** that function also decides
+  **colour**. Measured across the corpus, taking colour from the dominant run would drag the
+  labels of **7** datasheet spec regions from black `#000101` to the value column's grey
+  `#585857`. Dominant is right for typeface and wrong for colour, so the two questions are
+  now two functions. `key_for` reads only `mono/serif/bold/italic`, so this does not touch
+  font size (the 37 regions where the two runs differ in `size` are unaffected).
+
+  Real blast radius: **serif changes in 3 regions, bold in 0, colour in 0**. Re-running the
+  V5 datasheet: **0.27% -> 0.000%**. The V5 Series manual keeps 6 serif characters in `(A)`
+  at size 8, and that is **correct** — the `body` role of that cell genuinely is Song (the
+  fullwidth parentheses `（）`); only the `A` is `emphasis` Arial.
+
+  **Stage 6 only** — released jobs re-run stages 6 -> 7 to benefit.
+
 ## [1.9.34] - 2026-08-07
 
 ### Fixed

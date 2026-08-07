@@ -158,6 +158,29 @@ def role_style(reg: dict, role: str) -> dict:
     return same[0] if same else reg["runs"][0]
 
 
+def role_face(reg: dict, role: str) -> dict:
+    """Run quyết định KIỂU CHỮ của role: run mang NHIỀU NÉT MỰC NHẤT, không phải run đầu.
+
+    1.9.34 tước quyền quyết định của run rỗng, nhưng run có mực mà rất ngắn thì vẫn thắng.
+    Ca thật: V16 Lite quick guide có run 0 = một dấu `：` font `AdobeSongStd-Light` (serif)
+    rồi 210 ký tự `ArialMT` (sans) cùng role — một ký tự quyết định kiểu chữ cho cả đoạn,
+    và bản đã phát hành ra 7,94% ký tự Noto Serif. Cùng cơ chế: dấu `≥` mở đầu ô
+    `≥6000Cycles` của V5 datasheet, `(A)` của V5 Series manual.
+
+    Bản dịch một run phải chọn MỘT kiểu chữ cho cả vùng, nên chọn kiểu phủ được nhiều chữ
+    nguồn nhất là lệch ít nhất. Hoà thì `max` giữ run sớm hơn.
+
+    Vì sao KHÔNG sửa thẳng `role_style`: hàm đó còn quyết định MÀU (chỗ gọi cuối `paint`),
+    và ở bảng thông số datasheet nhãn là đen còn giá trị là xám — đo được 7 vùng mà run đa
+    số đổi màu nhãn từ `#000101` sang `#585857`. Kiểu chữ thì lấy theo đa số là đúng, màu
+    thì không; nên tách hai câu hỏi thành hai hàm thay vì nới một hàm cho cả hai.
+    """
+    inked = [r for r in reg["runs"] if r["role"] == role and r["text"].strip()]
+    if not inked:
+        return role_style(reg, role)
+    return max(inked, key=lambda r: len(r["text"].strip()))
+
+
 def ink_base_x(reg: dict, span_x: float) -> float:
     """Điểm bắt đầu vẽ theo NÉT MỰC đầu tiên, không theo origin của span đầu.
 
@@ -687,7 +710,7 @@ def leader_split(reg: dict, pack: "FontPack") -> list[dict] | None:
     line = reg["lines"][0]
     right = line["bbox"][2]                       # mép phải nét mực = chỗ số trang kết thúc
     size = line["spans"][0]["size"]
-    key, _ = pack.key_for(role_style(reg, reg["target_runs"][-1]["role"]))
+    key, _ = pack.key_for(role_face(reg, reg["target_runs"][-1]["role"]))
     tail_w = pack.font(key).text_length(segments[1], fontsize=size)
     cut = right - tail_w - 4.0                    # ranh giới hai cột
     if cut <= line["bbox"][0] + 4.0:              # không còn chỗ cho tiêu đề
@@ -915,7 +938,7 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     # resolve font/coverage per token
     tok_font: list[str] = []
     for t in tokens:
-        base_key, deg = pack.key_for(role_style(reg, t["role"]))
+        base_key, deg = pack.key_for(role_face(reg, t["role"]))
         for code, det in deg:
             issues.append((code, "P2", det))
         k = pack.cover(base_key, t["text"])
