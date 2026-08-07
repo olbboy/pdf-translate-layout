@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.12] - 2026-08-07
+
+### Fixed
+
+- **The masking path now measures ink, and can clip vertically.**
+
+  1. `protected` — the text a region must not erase — was built from span boxes
+     that include whitespace. Real case: a table's label cell was **26 spaces,
+     boxed 123pt wide**, and a row-number cell `'  6     '` inflated from 4.4pt to
+     20pt. Those *empty* rectangles forced two neighbouring cells to clip their
+     masks, so the English text stayed on the page and the translation was
+     painted on top of it. Whitespace-only spans are now skipped, and the rest
+     intersect their line's `ink_bbox`.
+  2. `build_masks` intersects `ink_bbox` before padding, for the same reason: a
+     cell boxed from 30.0 while its text starts at 49.6 reached into the
+     neighbouring column and lost the whole region.
+  3. The fallback can now clip **vertically** when a protected rect sits inside
+     the mask's horizontal span. Real case: a footnote block touching the page
+     number by **0.1pt** at its bottom edge — no horizontal branch applied, so
+     the block was dropped, left in English, and a neighbour's mask had already
+     eaten characters out of it (`temperature` → `tem   tur`).
+
+  Same family as 1.8.0 (`ink_bbox` for lines) and 1.9.6/1.9.9 (`base_x`): every
+  place that trusted a whitespace-padded box was wrong.
+
+  Result on one job: `MASK_CLIPPED` **8 → 0**, `MASK_CONFLICT` **2 → 0**, and
+  **457/457 regions painted, none skipped**.
+
 ## [1.9.11] - 2026-08-07
 
 ### Fixed

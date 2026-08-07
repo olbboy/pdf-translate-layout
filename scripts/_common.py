@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.9.11"
+ENGINE_VERSION = "1.9.12"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe

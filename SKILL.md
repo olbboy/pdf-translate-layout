@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.11"
+  version: "1.9.12"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.11 (engine `1.9.11`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.12 (engine `1.9.12`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -389,6 +389,23 @@ metadata:
 > Chỉ áp cho `rotation == 0` và `alignment == "left"`.
 > **Chưa xử được**: dấu gạch đầu dòng là line-art neo cứng theo y của bản gốc, mà tiếng Việt
 > wrap ra số dòng khác — lệch dọc vẫn còn, cần DTP tay.
+> **1.9.12** đường mask đo theo **nét mực**, và biết cắt theo chiều **dọc**.
+> (1) `protected` — vùng chữ phải giữ nguyên — dựng từ bbox span có tính cả khoảng trắng.
+> Ca thật V5 Series p10: ô nhãn một hàng bảng là **26 ký tự space, bbox rộng 123pt**, và ô
+> số thứ tự `'  6     '` phình từ 4.4pt lên 20pt. Hai vùng RỖNG đó ép mask của hai ô kề bên
+> phải cắt ngắn, nên chữ tiếng Anh còn nguyên trên trang và bản dịch vẽ chồng lên.
+> Nay bỏ hẳn span toàn khoảng trắng, span còn lại lấy giao với `ink_bbox` của dòng.
+> (2) `build_masks` cũng giao với `ink_bbox` trước khi nới pad — ô `'         Alarm
+> Indicator '` có bbox bắt đầu ở 30.0 trong khi chữ bắt đầu ở 49.6, mask thò sang chạm ô số
+> thứ tự và cả vùng bị bỏ vẽ.
+> (3) Nhánh dự phòng biết cắt theo chiều **dọc** khi vùng bảo vệ nằm trọn trong dải ngang
+> của mask. Ca thật V5 p6: khối chú thích `[1]…[4]` chạm số trang đúng **0.1pt** ở mép dưới
+> — không nhánh ngang nào áp được nên cả khối bị bỏ vẽ, để lại nguyên tiếng Anh mà mask hàng
+> xóm đã ăn mất vài chữ (`temperature` → `tem   tur`).
+> Cùng lớp lỗi 1.8.0 (`ink_bbox` cho line), 1.9.6/1.9.9 (`base_x`): chỗ nào dùng bbox có đệm
+> space thì chỗ đó sai.
+> Kết quả trên V5 Series: `MASK_CLIPPED` **8 → 0**, `MASK_CONFLICT` **2 → 0**, vẽ **457/457
+> vùng, không bỏ vùng nào**. HV48100 không đổi (2 vùng bỏ vẽ vẫn là ký hiệu Wingdings).
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

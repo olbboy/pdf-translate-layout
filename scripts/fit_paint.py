@@ -630,17 +630,52 @@ def span_mask(span: dict, pad: float) -> pymupdf.Rect:
     return pymupdf.Rect(b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad)
 
 
+def protected_rects(reg: dict) -> list[pymupdf.Rect]:
+    """Vùng chữ PHẢI giữ nguyên của một region không được vẽ lại — theo NÉT MỰC.
+
+    `protected` chặn mask của region khác đè lên chữ mình giữ lại. Nhưng bbox của span tính
+    cả khoảng trắng đầu/đuôi, mà space có advance và không vẽ gì — nên nó "bảo vệ" cả chỗ
+    trống. Ca thật V5 Series p10: ô nhãn của một hàng bảng là **26 ký tự space**, bbox rộng
+    123pt, chắn ngang giữa cột tên và cột mô tả; ô số thứ tự `'  6     '` cũng phình từ 4.4pt
+    lên 20pt. Hai vùng rỗng đó ép mask của hai ô kề bên phải cắt ngắn, nên chữ tiếng Anh còn
+    nguyên trên trang và bản dịch vẽ chồng lên — đọc thành chữ đè chữ.
+
+    Cùng lớp lỗi 1.8.0 (`build_lines` đo `ink_bbox`) và 1.9.6 (`base_x` theo nét mực): chỗ
+    nào dùng bbox có đệm space thì chỗ đó sai.
+
+    Luật: bỏ hẳn span toàn khoảng trắng; span còn lại lấy giao với `ink_bbox` của dòng chứa
+    nó, vốn đã trừ space đầu/đuôi từ 1.8.0.
+    """
+    out = []
+    for line in reg.get("lines") or []:
+        lb = pymupdf.Rect(line["bbox"])
+        for span in line["spans"]:
+            if not span["text"].strip():
+                continue
+            r = span_mask(span, 0.0) & lb
+            if not r.is_empty and r.width > 0 and r.height > 0:
+                out.append(r)
+    return out
+
+
 def build_masks(reg: dict, protected: list[pymupdf.Rect], cfg: dict) -> tuple[list, list]:
     """Mask cho từng span; pad co dần nếu chạm text được giữ (spec §9.1)."""
     issues, rects = [], []
     rc = cfg["render"]
     for line in reg["lines"]:
+        ink = pymupdf.Rect(line["bbox"])
         for span in line["spans"]:
+            if not span["text"].strip():
+                continue                      # span toàn khoảng trắng: không có gì để xoá
             pad0 = min(max(rc["mask_pad_ratio"] * span["size"], rc["mask_pad_min_pt"]),
                        rc["mask_pad_max_pt"])
             rect = None
             for pad in (pad0, pad0 / 2, 0.05, 0.0):
-                cand = span_mask(span, pad)
+                # Giao với nét mực của dòng TRƯỚC khi nới pad: bbox span tính cả space
+                # đầu/đuôi, mà space không vẽ gì. Ca thật V5 p10: ô `'         Alarm
+                # Indicator '` có bbox bắt đầu ở 30.0 trong khi chữ bắt đầu ở 49.6, nên mask
+                # thò sang chạm ô số thứ tự và cả vùng bị bỏ vẽ — chữ ở lại tiếng Anh.
+                cand = (span_mask(span, 0.0) & ink) + (-pad, -pad, pad, pad)
                 if not any(cand.intersects(p) for p in protected):
                     rect = cand
                     break
@@ -650,7 +685,7 @@ def build_masks(reg: dict, protected: list[pymupdf.Rect], cfg: dict) -> tuple[li
                 # trang: ca thật p6 dòng mục lục "2.5 Current Limit Table ....." bị bỏ vì
                 # dải chấm chạm ô số trang (region `keep`), nên cả dòng còn tiếng Anh trong
                 # bản giao khách dù bản dịch có sẵn.
-                cand = span_mask(span, 0.0)
+                cand = span_mask(span, 0.0) & ink
                 for p in protected:
                     if not cand.intersects(p):
                         continue
@@ -658,7 +693,15 @@ def build_masks(reg: dict, protected: list[pymupdf.Rect], cfg: dict) -> tuple[li
                         cand.x1 = min(cand.x1, p.x0)
                     elif p.x0 <= cand.x0 and p.x1 < cand.x1:    # ở bên trái
                         cand.x0 = max(cand.x0, p.x1)
-                if (cand.is_empty or cand.width < 1.0
+                    # Vùng bảo vệ nằm trọn trong dải ngang của mask thì cắt theo chiều DỌC.
+                    # Ca thật V5 p6: khối chú thích chạm số trang đúng 0.1pt ở mép dưới —
+                    # không nhánh ngang nào áp được nên cả khối bị bỏ vẽ, để lại nguyên
+                    # tiếng Anh mà mask hàng xóm đã ăn mất vài chữ.
+                    elif p.y0 >= cand.y0 and p.y1 >= cand.y1:   # ở bên dưới
+                        cand.y1 = min(cand.y1, p.y0)
+                    elif p.y1 <= cand.y1 and p.y0 <= cand.y0:   # ở bên trên
+                        cand.y0 = max(cand.y0, p.y1)
+                if (cand.is_empty or cand.width < 1.0 or cand.height < 1.0
                         or any(cand.intersects(p) for p in protected)):
                     issues.append(("MASK_CONFLICT", "P1",
                                    f"mask span {span['text'][:16]!r} chạm text giữ nguyên"))
@@ -757,9 +800,9 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             continue
 
         painted_ids = {reg["region_id"] for reg, _ in fitted}
-        protected = [span_mask(s, 0.0) for r in regions
-                     if r["page"] == pno and r["region_id"] not in painted_ids
-                     for l in r["lines"] for s in l["spans"]]
+        protected = [r for reg_ in regions
+                     if reg_["page"] == pno and reg_["region_id"] not in painted_ids
+                     for r in protected_rects(reg_)]
 
         page_masks: list[pymupdf.Rect] = []
         ok_regions: list[tuple[dict, dict]] = []

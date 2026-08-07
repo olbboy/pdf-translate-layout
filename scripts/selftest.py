@@ -817,6 +817,47 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── vùng bảo vệ đo theo nét mực, không theo bbox có đệm space (1.9.12) ──
+# Ca thật V5 Series p10: ô nhãn một hàng bảng là 26 ký tự space, bbox rộng 123pt, "bảo vệ"
+# chỗ trống rỗng và ép mask của ô kề bên cắt ngắn → chữ nguồn còn nguyên, bản dịch vẽ chồng.
+_pline = lambda lb, sb, t: {"bbox": lb, "spans": [{"bbox": sb, "text": t, "size": 9.0}]}  # noqa: E731
+
+check("bảo vệ: span toàn khoảng trắng thì không bảo vệ gì",
+      _fp.protected_rects({"lines": [_pline([66.0, 262.7, 189.6, 273.7],
+                                            [66.0, 262.7, 189.6, 273.7], "        ")]}) == [])
+_pr = _fp.protected_rects({"lines": [_pline([34.5, 262.7, 38.9, 273.7],
+                                            [30.0, 262.7, 50.0, 273.7], "  6     ")]})
+check("bảo vệ: span có đệm space bị cắt về đúng nét mực",
+      len(_pr) == 1 and abs(_pr[0].x0 - 34.5) < 0.01 and abs(_pr[0].x1 - 38.9) < 0.01,
+      str(_pr))
+check("bảo vệ: span kín chữ giữ nguyên bề rộng",
+      [round(r.x1 - r.x0, 1) for r in _fp.protected_rects(
+          {"lines": [_pline([40.0, 10.0, 90.0, 20.0], [40.0, 10.0, 90.0, 20.0], "ALM")]})]
+      == [50.0])
+
+_MCFG = {"render": {"mask_pad_ratio": 0.15, "mask_pad_min_pt": 0.3, "mask_pad_max_pt": 1.0}}
+
+
+def _mask_of(line_bbox, span_bbox, text, prot):
+    import pymupdf as _mu
+    reg = {"lines": [{"bbox": line_bbox,
+                      "spans": [{"bbox": span_bbox, "text": text, "size": 9.0}]}]}
+    return _fp.build_masks(reg, [_mu.Rect(p) for p in prot], _MCFG)
+
+
+# Chạm 0.1pt ở mép dưới với số trang → cắt dọc, không bỏ cả khối.
+_r, _i = _mask_of([29.3, 561.1, 223.0, 569.7], [29.3, 561.1, 223.0, 569.7], "abc",
+                  [[208.3, 569.6, 212.6, 579.1]])
+check("mask: chạm mép dưới thì cắt dọc, không bỏ cả vùng",
+      len(_r) == 1 and [c[0] for c in _i] == ["MASK_CLIPPED"], str(_i))
+check("mask: cắt dọc đúng tới mép vùng bảo vệ",
+      _r and abs(_r[0].y1 - 569.6) < 0.01, str(_r))
+# Ô có 9 space đầu: mask phải bắt đầu ở nét mực, không chạm ô số thứ tự bên trái.
+_r2, _i2 = _mask_of([49.6, 215.7, 103.3, 226.7], [30.0, 215.7, 105.6, 226.7],
+                    "         Alarm Indicator ", [[34.2, 208.3, 38.7, 219.2]])
+check("mask: space đầu ô không kéo mask sang ô bên cạnh",
+      len(_r2) == 1 and not _i2 and _r2[0].x0 > 38.7, str(_i2) + str(_r2))
+
 # ── thụt lề theo từng đoạn của bản dịch (1.9.11) ────────────────────────
 # Bản gốc trộn nhiều mức thụt trong MỘT region: dòng gạch đầu dòng thụt vào, văn xuôi giữa
 # chúng thì không. Một `base_x` cho cả vùng làm chữ dịch đè lên chính dấu gạch đầu dòng.
