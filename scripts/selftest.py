@@ -843,6 +843,8 @@ check("role: run đậm ở giữa vẫn là emphasis như cũ",
       == ["body", "emphasis", "body"])
 check("role: luôn còn ít nhất một run body",
       "body" in _roles([_span("Danger", True), _span("thân bài", False)]))
+check("role: run thường theo sau chỉ có khoảng trắng thì KHÔNG hạ vai (giữ đậm cả dòng)",
+      _roles([_span("1 Specifications", True), _span("   ", False)]) == ["body", "body"])
 check("role: đậm mở đầu nhưng sau toàn đậm thì không đổi vai",
       _roles([_span("A", True), _span("B", True)]) == ["body"])
 

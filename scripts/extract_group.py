@@ -197,7 +197,11 @@ def build_runs(all_spans: list) -> list:
     # 50% ký tự Noto Sans Bold trong khi bản đã phát hành trước đó chỉ 13%.
     # Điều kiện `lead_in`: run 0 in đậm VÀ còn ít nhất một run thường phía sau. Region đậm
     # toàn bộ (tiêu đề thật) không thoả, nên vẫn vẽ đậm nguyên như cũ.
-    lead_in = bool(runs) and runs[0]["bold"] and any(not r["bold"] for r in runs[1:])
+    # Run thường theo sau phải có CHỮ THẬT. Bản gốc hay để một run toàn khoảng trắng ở
+    # cuối; nhận nhầm nó thì tiêu đề in đậm nguyên dòng (dòng chương của mục lục) bị hạ
+    # thành `emphasis` rồi `role_style("body")` trả về đúng run trắng đó — cả dòng mất đậm.
+    lead_in = bool(runs) and runs[0]["bold"] and any(
+        not r["bold"] and r["text"].strip() for r in runs[1:])
     for i, r in enumerate(runs):
         r.pop("_key")
         r["role"] = ("label" if i == 0 and r["bold"] and len(runs) > 1

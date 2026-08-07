@@ -332,7 +332,10 @@ metadata:
 > Đo trên HV48100 user manual: **59 region dính, chứa 46% tổng ký tự**; bản dịch ra **50%
 > ký tự Noto Sans Bold** trong khi bản gốc chỉ 4.5% (`Arial-BoldMT` 2848 / `ArialMT`
 > 60144) và bản V16 Lite đã phát hành là 13%.
-> Nay: run 0 in đậm **có ít nhất một run thường phía sau** (`lead_in`) → `emphasis`. Region
+> Nay: run 0 in đậm **có ít nhất một run thường CÓ CHỮ THẬT phía sau** (`lead_in`) →
+> `emphasis`. Điều kiện "chữ thật" là bắt buộc: bản gốc hay để một run toàn khoảng trắng ở
+> cuối, nhận nhầm nó thì tiêu đề in đậm nguyên dòng — 6 dòng chương của mục lục V5 Series —
+> bị hạ vai rồi `role_style("body")` trả về đúng run trắng đó, cả dòng mất đậm. Region
 > đậm toàn bộ — tiêu đề thật — không thoả điều kiện nên vẫn vẽ đậm nguyên như cũ. Bất biến
 > "luôn còn ít nhất một run `body`" giữ nguyên nhưng diễn đạt lại cho đúng: kiểm `body` chứ
 > không kiểm `label`.

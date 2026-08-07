@@ -22,8 +22,12 @@ versioning follows [SemVer](https://semver.org/).
   is 4.5% bold (`Arial-BoldMT` 2848 vs `ArialMT` 60144) and an already-released
   sibling document sits at 13%.
 
-  Now a bold run 0 **followed by at least one non-bold run** (`lead_in`) becomes
-  `emphasis`. A fully bold region — a real heading — does not qualify and still
+  Now a bold run 0 **followed by at least one non-bold run carrying real text**
+  (`lead_in`) becomes `emphasis`. The "real text" condition is load-bearing:
+  sources often end a region with a whitespace-only run, and accepting that would
+  demote a fully bold line — six chapter rows in another document's contents page
+  — after which `role_style("body")` returns that very blank run and the line
+  loses its bold. A fully bold region — a real heading — does not qualify and still
   paints bold as before. The "there is always at least one `body` run" invariant
   is kept, but stated correctly: it checks for `body`, not for `label`.
 
