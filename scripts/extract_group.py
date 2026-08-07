@@ -233,10 +233,29 @@ def column_consensus(regions: list) -> int:
         if n / len(cells) < COLUMN_MIN_AGREE:
             continue
         for r in cells:
-            if r["alignment"] != win:
-                r["alignment"] = win
-                changed += 1
+            if r["alignment"] == win or not can_take(r, win):
+                continue
+            r["alignment"] = win
+            changed += 1
     return changed
+
+
+def can_take(reg: dict, win: str) -> bool:
+    """Ô có được phép nhận `win` từ cột không.
+
+    Chỉ chặn một chiều: đổi sang **left**. Text căn trái vẽ từ `base_x` — mép mực nguồn —
+    nên ngân sách wrap chỉ còn `container.x1 - base_x`. Ô nào mực bắt đầu xa mép trái thì
+    ngân sách đó hụt hẳn, và nếu ô ấy thật ra căn giữa thì ép sang trái vừa sai vừa làm chữ
+    không fit nổi. Ca thật HV48100 p25: cột `OFF/ON` rộng 20.4pt, năm ô `OFF` lấp gần kín ô
+    nên luật dung sai đọc nhầm thành `left` và thắng phiếu 5/6; ô `ON` (căn giữa THẬT, khe
+    4.0/3.0) bị kéo theo, `Sáng` chỉ còn 16.4pt để wrap → `FIT_IMPOSSIBLE`.
+
+    `center` và `right` neo vào khung nên không hụt ngân sách — không cần chặn.
+    """
+    if win != "left":
+        return True
+    c = reg["container"]
+    return reg["bbox"][0] - c[0] <= max(2.0, 0.05 * (c[2] - c[0]))
 
 
 def build_runs(all_spans: list) -> list:

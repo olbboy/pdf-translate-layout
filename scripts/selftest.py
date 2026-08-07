@@ -1071,8 +1071,9 @@ check("điểm vẽ: chỉ nâng, không hạ dưới origin dòng đầu",
 # nhau, luật dung sai đọc thành `center`. Ca thật V5 p8: 7 ô cùng cột `left`, một ô `center`.
 
 
-def _cell(align, x0=29.9, x1=217.0, nlines=1):
+def _cell(align, x0=29.9, x1=217.0, nlines=1, ink=None):
     return {"region_type": "table_cell", "alignment": align, "container": [x0, 0.0, x1, 10.0],
+            "bbox": [ink if ink is not None else x0 + 1.0, 0.0, x1 - 1.0, 10.0],
             "lines": [{"bbox": [0, 0, 1, 1]}] * nlines}
 
 
@@ -1095,6 +1096,17 @@ _two = [_cell("left") for _ in range(4)] + [_cell("center", x0=250.0, x1=390.0)]
 check("căn lề cột: hai cột khác nhau tính riêng",
       _eg.column_consensus(_two) == 0 and _two[4]["alignment"] == "center")
 # Hàm đúng mà pipeline không gọi thì vô dụng — và đây là lỗi im lặng, không test nào khác bắt.
+# Ô hẹp lấp gần kín thì luật dung sai đọc nhầm thành `left` và thắng phiếu — ô căn giữa THẬT
+# bị kéo theo, ngân sách wrap tụt còn `x1 - base_x` và chữ hết fit. Ca thật HV48100 p25.
+_tight = [_cell("left", 170.9, 191.3, ink=172.6) for _ in range(5)] \
+    + [_cell("center", 170.9, 191.3, ink=174.9)]
+check("căn lề cột: không kéo ô mực-lệch-phải sang trái (mất ngân sách wrap)",
+      _eg.column_consensus(_tight) == 0 and _tight[5]["alignment"] == "center")
+# Chiều ngược lại không hụt ngân sách: center/right neo vào khung, cứ nhận.
+_toC = [_cell("center", 29.9, 217.0, ink=100.0) for _ in range(5)] \
+    + [_cell("left", 29.9, 217.0, ink=100.0)]
+check("căn lề cột: đổi sang center thì không cần chốt mực",
+      _eg.column_consensus(_toC) == 1 and _toC[5]["alignment"] == "center")
 check("căn lề cột: stage 2 thật sự gọi đồng thuận sau khi gán alignment",
       "column_consensus(ordered)" in open(
           os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),

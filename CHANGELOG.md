@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.19] - 2026-08-07
+
+### Fixed
+
+- **Column consensus no longer drags a cell to `left` when its ink starts away
+  from the container's left edge.** Left-aligned text is drawn from `base_x` —
+  the source ink edge — so the wrap budget is only `container.x1 - base_x`; a
+  cell whose ink starts well inside loses most of it, and if that cell was
+  genuinely centred, forcing it left is both wrong and unfittable. Real case,
+  HV48100 p25: an `OFF`/`ON` column 20.4pt wide, where five `OFF` cells nearly
+  fill the cell and so were misread as `left`, winning the vote 5-to-1; the `ON`
+  cell (genuinely centred, gaps 4.0 / 3.0) got pulled along and `Sáng` was left
+  16.4pt to wrap in — `FIT_IMPOSSIBLE`. Only the move *to* `left` is guarded;
+  `center` and `right` anchor to the box and cost no budget.
+
 ## [1.9.18] - 2026-08-07
 
 ### Added

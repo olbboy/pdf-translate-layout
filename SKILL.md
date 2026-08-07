@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.18"
+  version: "1.9.19"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.18 (engine `1.9.18`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.19 (engine `1.9.19`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -471,6 +471,13 @@ metadata:
 > Bẫy đã sập một lần: `shape.finish` mặc định **đóng đường**, tức vẽ thêm lượt về từ điểm
 > cuối; lượt về lệch pha nét đứt nên lấp kín khe và gạch dẫn thành liền nét — chỉ ở những
 > dòng có chiều dài chia đúng kiểu ấy, nên rất dễ lọt mắt.
+> **1.9.19** đồng thuận cột **không kéo ô sang `left`** khi mực của nó bắt đầu xa mép trái
+> khung. Text căn trái vẽ từ `base_x` nên ngân sách wrap chỉ còn `container.x1 - base_x`; ô
+> nào mực lệch vào trong thì hụt hẳn, mà nếu ô ấy căn giữa thật thì ép sang trái vừa sai vừa
+> làm chữ không fit nổi. Ca thật HV48100 p25: cột `OFF/ON` rộng 20.4pt, năm ô `OFF` lấp gần
+> kín nên bị đọc nhầm thành `left` và thắng phiếu 5/6; ô `ON` căn giữa THẬT bị kéo theo,
+> `Sáng` còn 16.4pt để wrap → `FIT_IMPOSSIBLE`. Chỉ chặn chiều sang `left`; `center`/`right`
+> neo vào khung nên không tốn ngân sách.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
