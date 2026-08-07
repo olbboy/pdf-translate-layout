@@ -817,6 +817,25 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── thụt lề theo từng đoạn của bản dịch (1.9.11) ────────────────────────
+# Bản gốc trộn nhiều mức thụt trong MỘT region: dòng gạch đầu dòng thụt vào, văn xuôi giữa
+# chúng thì không. Một `base_x` cho cả vùng làm chữ dịch đè lên chính dấu gạch đầu dòng.
+_rl = lambda *xs: {"lines": [{"bbox": [x, 0.0, x + 10.0, 10.0]} for x in xs]}  # noqa: E731
+
+check("thụt lề: mỗi đoạn là một mục thụt vào thì tất cả cùng thụt (không nham nhở)",
+      _fp.segment_indents(_rl(36.0, 27.7, 27.7, 27.7, 36.0, 36.0), 27.7, 3)
+      == [8.3, 8.3, 8.3])
+check("thụt lề: hai mức nhưng số mục không khớp số đoạn thì bỏ qua",
+      _fp.segment_indents(_rl(36.0, 27.7, 27.7, 36.0), 27.7, 3) == [0.0, 0.0, 0.0])
+check("thụt lề: số đoạn bằng số dòng nguồn thì suy ra được",
+      _fp.segment_indents(_rl(36.0, 27.7), 27.7, 2) == [8.3, 0.0])
+check("thụt lề: không khớp cả hai thì trả toàn 0 (giữ hành vi cũ)",
+      _fp.segment_indents(_rl(36.0, 27.7, 27.7, 36.0, 36.0, 36.0), 27.7, 7) == [0.0] * 7)
+check("thụt lề: không bao giờ âm — chữ dịch không vẽ trái hơn base_x",
+      _fp.segment_indents(_rl(20.0, 40.0), 30.0, 2) == [0.0, 10.0])
+check("thụt lề: region một dòng không có gì để suy",
+      _fp.segment_indents(_rl(36.0), 27.7, 1) == [0.0])
+
 # ── căn lề đo bằng số dòng đồng thuận, không bằng biên độ (1.9.8) ───────
 # Biên độ max-min để MỘT dòng lạc quyết định cả khối. Ca thật V5 Series p15: 8 dòng cùng
 # mép trái 26.8 + một chú thích bảng lệch phải ở dòng cuối → cả đoạn bị đẩy sang phải.

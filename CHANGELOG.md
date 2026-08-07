@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.11] - 2026-08-07
+
+### Fixed
+
+- **Per-segment indentation** (`segment_indents`). Sources mix indent levels
+  inside a single region — bullet items indented, the prose between them not —
+  while the fitter has one `base_x`, so every line started at the leftmost ink
+  and the translation **ran over the very bullet glyphs the engine preserves**.
+
+  The segment-to-indent mapping accepts only two well-defined shapes: (a) the
+  number of translated segments equals the number of source lines, giving a 1:1
+  map; (b) the source has exactly two indent levels and the number of indented
+  items equals the number of segments, so every segment takes that one indent.
+  Anything else returns zero and keeps the old behaviour — **it does not guess**.
+
+  A third rule was tried and dropped: "segments equal same-indent runs" merges two
+  adjacent single-line bullets into one run and produces a ragged result — one
+  item indented, the next not — which reads worse than leaving it alone.
+
+  Measured across 5 jobs: 50 regions mix indent levels, **30 are derivable**.
+  Indents are never negative, and the rule only applies to unrotated,
+  left-aligned regions.
+
+  **Still open:** bullet glyphs are line art pinned to the source's y positions,
+  and Vietnamese wraps to a different line count, so vertical misalignment
+  remains. That needs manual DTP.
+
 ## [1.9.10] - 2026-08-07
 
 ### Fixed

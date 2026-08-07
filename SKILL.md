@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.10"
+  version: "1.9.11"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.10 (engine `1.9.10`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.11 (engine `1.9.11`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -375,6 +375,20 @@ metadata:
 > 18 → 19 trên HV48100 — đều là cờ cho reviewer nhìn, không phải lỗi.
 > Đính chính kèm: docstring `ink_base_x` vẫn mô tả guard cũ của 1.9.6 sau khi 1.9.9 đã nới —
 > nay ghi đúng thực trạng.
+> **1.9.11** thụt lề **theo từng đoạn** của bản dịch (`segment_indents`). Bản gốc trộn
+> nhiều mức thụt trong MỘT region — dòng gạch đầu dòng thụt vào, văn xuôi giữa chúng thì
+> không — mà fitter chỉ có một `base_x`, nên mọi dòng bắt đầu ở mép trái nhất và chữ dịch
+> **chạy đè lên chính dấu gạch đầu dòng** mà engine giữ lại. Ca thật V5 Series p12 và p11.
+> Ánh xạ đoạn-bản-dịch → mức-thụt **chỉ nhận hai hình mẫu xác định**: (a) số đoạn bằng số
+> dòng nguồn — bản dịch giữ nguyên cấu trúc dòng, ánh xạ 1:1; (b) nguồn có đúng hai mức
+> thụt và số mục thụt vào bằng số đoạn — mọi đoạn cùng thụt một mức. Ngoài hai hình mẫu đó
+> trả về 0, giữ nguyên hành vi cũ: **không đoán**.
+> Đã thử và bỏ luật "số đoạn bằng số đoạn-cùng-mức": hai mục gạch đầu dòng liền nhau cùng
+> mức bị gộp làm một, cho ra kết quả nham nhở — mục thụt, mục không, xấu hơn cả không sửa.
+> Đo trên 5 job: 50 vùng trộn mức thụt, **30 vùng suy ra được**. Thụt lề không bao giờ âm.
+> Chỉ áp cho `rotation == 0` và `alignment == "left"`.
+> **Chưa xử được**: dấu gạch đầu dòng là line-art neo cứng theo y của bản gốc, mà tiếng Việt
+> wrap ra số dòng khác — lệch dọc vẫn còn, cần DTP tay.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

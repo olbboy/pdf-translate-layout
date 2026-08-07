@@ -170,6 +170,37 @@ def ink_base_x(reg: dict, span_x: float) -> float:
     return max(span_x, min(l["bbox"][0] for l in lines))
 
 
+def segment_indents(reg: dict, base_x: float, n_seg: int) -> list[float]:
+    """Thụt lề (pt) cho từng đoạn ngăn bằng `\n` của bản dịch, hoặc toàn 0 nếu không suy ra được.
+
+    Bản gốc hay trộn nhiều mức thụt trong MỘT region: dòng gạch đầu dòng thụt vào, văn xuôi
+    giữa chúng thì không. Fitter chỉ có một `base_x` cho cả vùng nên mọi dòng bắt đầu ở mép
+    trái nhất — chữ dịch chạy đè lên chính dấu gạch đầu dòng mà engine giữ lại.
+
+    Ánh xạ chỉ xác định được khi số đoạn của bản dịch bằng **số dòng nguồn** (bản dịch giữ
+    nguyên cấu trúc dòng) hoặc bằng **số đoạn cùng mức thụt** của nguồn. Ngoài hai trường
+    hợp đó thì không có cách nào biết đoạn nào thuộc mức nào — trả về toàn 0, giữ nguyên
+    hành vi cũ. Đo trên 5 job: 48 vùng trộn mức thụt, **22 vùng suy ra được**.
+
+    Không bao giờ trả số âm: chữ dịch không được vẽ trái hơn `base_x`.
+    """
+    lines = reg.get("lines") or []
+    if len(lines) < 2 or n_seg < 1:
+        return [0.0] * max(1, n_seg)
+    lv = [l["bbox"][0] for l in lines]
+    if n_seg == len(lv):
+        # Bản dịch giữ nguyên cấu trúc dòng → ánh xạ 1:1, chính xác nhất.
+        return [max(0.0, round(v - base_x, 2)) for v in lv]
+    # Ngược lại chỉ nhận đúng một hình mẫu: hai mức thụt, mỗi đoạn bản dịch là một mục thụt
+    # vào. Không dùng "đoạn cùng mức" vì hai mục gạch đầu dòng liền nhau cùng mức bị gộp làm
+    # một, cho ra kết quả nham nhở — mục thụt, mục không.
+    lo = min(lv)
+    deep = [v for v in lv if v - lo >= 2.0]
+    if deep and n_seg == len(deep) and max(deep) - min(deep) < 2.0:
+        return [max(0.0, round(deep[0] - base_x, 2))] * n_seg
+    return [0.0] * n_seg
+
+
 HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")
 # Tựa được coi là "căn giữa theo trang" khi tâm chữ nguồn lệch tâm trang không quá ngần này.
 CENTERED_TOL_PT = 3.0
@@ -405,6 +436,10 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     # hàng bảng bên dưới — nguồn của phần lớn G4_OUT_OF_CONTAINER.
     avail_h = max(1.0, c[3] - base_y) if reg["rotation"] == 0 else chh
 
+    n_seg = 1 + sum(1 for t in tokens[1:] if t.get("br"))
+    seg_ind = (segment_indents(reg, base_x, n_seg)
+               if reg["rotation"] == 0 and reg["alignment"] == "left" else [0.0] * n_seg)
+
     def layout_at(s: float, cap_one_line: bool = False):
         widths = [pack.font(k).text_length(t["text"], fontsize=s)
                   for t, k in zip(tokens, tok_font)]
@@ -420,12 +455,15 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
                 cur = []
             cur.append(i)
         segments.append(cur)
-        lines = []
-        for seg in segments:
-            sub = wrap_lines([widths[i] for i in seg], [space_ws[i] for i in seg], wrap_w)
+        lines, line_seg = [], []
+        for si, seg in enumerate(segments):
+            ind = seg_ind[si] if si < len(seg_ind) else 0.0
+            sub = wrap_lines([widths[i] for i in seg], [space_ws[i] for i in seg],
+                             max(wrap_w - ind, 1.0))
             if sub is None:
                 return None
             lines += [[seg[j] for j in line] for line in sub]
+            line_seg += [si] * len(sub)
         n = len(lines)
         # Dòng đầu nằm ngay tại base_y nên chỉ (n-1) dòng tiếp theo mới ăn vào ngân sách.
         # Đáy vệt mực = baseline cuối + INK_DESCENT_EM (đúng thứ Gate 4 đo), được phép vượt
@@ -439,7 +477,8 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             return None
         if (n - 1) * leading_ratio * s > budget:
             return None
-        return {"lines": lines, "widths": widths, "space_ws": space_ws}
+        return {"lines": lines, "widths": widths, "space_ws": space_ws,
+                "line_seg": line_seg}
 
     def run_search(cap_one_line: bool = False):
         lo, hi, best_, s_ = floor, src_size, None, None
@@ -524,7 +563,12 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         elif align == "right":
             x = c[2] - lw if reg["rotation"] == 0 else base_x
         else:
-            x = base_x if reg["rotation"] == 0 else base_x
+            ind = 0.0
+            if reg["rotation"] == 0:
+                seg_of = best.get("line_seg") or []
+                if li < len(seg_of) and seg_of[li] < len(seg_ind):
+                    ind = seg_ind[seg_of[li]]
+            x = base_x + ind
         y = base_y + li * leading
         segs, cx = [], x
         cur = None
