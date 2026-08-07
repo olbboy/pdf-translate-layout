@@ -1297,6 +1297,20 @@ check("base_x: nhiều dòng lệch mép thì lấy mép trái nhất, không l�
       _fp.ink_base_x(_reg_lines(60.0, 45.7, span_x=45.7), 45.7) == 45.7)
 check("base_x: mọi dòng đều thụt (ô gộp căn bằng space) thì nâng tới mép trái nhất",
       _fp.ink_base_x(_reg_lines(92.2, 107.3, span_x=27.7), 27.7) == 92.2)
+# Kẹp "chỉ nâng" phải áp theo TỪNG DÒNG. Ô bảng gộp mà thứ tự đọc bắt đầu ở cột PHẢI thì
+# kẹp cả vùng bằng origin dòng đầu ghim base_x vào cột phải, thụt lề hoá âm rồi clamp về 0 và
+# cả khối dồn thành một chồng. Ca thật V5 p6, ô gộp hàng `DC Breaker`/`Cycle Life`.
+_merged = {"lines": [{"bbox": [297.2, 0.0, 365.7, 10.0], "spans": [{"origin": [297.19, 8.0]}]},
+                     {"bbox": [191.0, 0.0, 201.2, 10.0], "spans": [{"origin": [191.0, 8.0]}]},
+                     {"bbox": [297.2, 0.0, 359.9, 10.0], "spans": [{"origin": [297.19, 8.0]}]}]}
+check("base_x: dòng đầu ở cột phải không được ghim cả vùng",
+      abs(_fp.ink_base_x(_merged, 297.19) - 191.0) < 0.01, str(_fp.ink_base_x(_merged, 297.19)))
+# Side-bearing âm chỉ được chặn TRONG dòng của nó, không lan sang dòng khác.
+_sb = {"lines": [{"bbox": [44.9, 0.0, 90.0, 10.0], "spans": [{"origin": [45.7, 8.0]}]},
+                 {"bbox": [60.0, 0.0, 90.0, 10.0], "spans": [{"origin": [60.0, 8.0]}]}]}
+check("base_x: side-bearing âm bị chặn trong dòng, không lan ra vùng",
+      abs(_fp.ink_base_x(_sb, 45.7) - 45.7) < 0.01, str(_fp.ink_base_x(_sb, 45.7)))
+
 check("base_x: region không có lines thì trả nguyên span_x",
       _fp.ink_base_x({"lines": []}, 45.7) == 45.7)
 

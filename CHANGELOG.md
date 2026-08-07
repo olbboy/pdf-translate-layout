@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.24] - 2026-08-07
+
+### Fixed
+
+- **`ink_base_x` applies its "raise, never lower" clamp per LINE**, then takes the
+  minimum, instead of clamping the whole region with the first line's origin. The
+  two halves do different jobs: `max(origin, ink)` within a line stops a negative
+  side bearing (an italic `f`, a `J`) from dragging `base_x` off; `min(...)` across
+  lines brings it to the region's real left edge. The whole-region clamp can only
+  ever fire when the **first** line sits to the right of another line's ink — and
+  in exactly that case it is always wrong.
+
+  Real case, V5 p6: `find_tables` merges the `DC Breaker` and `Cycle Life` rows
+  into one cell (the source draws no horizontal rule between them across those
+  columns). Reading order starts in the **right** column — `Dual Pole, 125Vdc,` at
+  x=297.2 — while the middle column's `No` sits at x=191.0. `base_x` got pinned to
+  297.2, every indent `x_i - base_x` went negative and clamped to 0, and all four
+  lines collapsed into one stack: `Không` wedged between the two spec lines of the
+  right column, and `≥6000 chu kỳ` losing its full-width span.
+
+  Measured across the jobs on hand: **7 regions whose first line is not the
+  leftmost, exactly 1 of them left-aligned** — the patch touches the broken region
+  and nothing else; the other six are `center`/`right`, which anchor to the box and
+  never consult `base_x`.
+
+  **No gate saw this.** P0/P1/P2 are identical before and after. It surfaced in the
+  source-vs-translation compare that the reviewer reads before approving — which is
+  the argument for producing that compare on every job.
+
 ## [1.9.23] - 2026-08-07
 
 ### Fixed

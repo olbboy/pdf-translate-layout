@@ -163,11 +163,19 @@ def ink_base_x(reg: dict, span_x: float) -> float:
     lines = reg.get("lines") or []
     if not lines:
         return span_x
-    # Lấy mép mực TRÁI NHẤT trong các dòng: không bao giờ vẽ trái hơn chữ nguồn của bất kỳ
-    # dòng nào, nên văn xuôi có thụt lề dòng đầu vẫn an toàn (mép trái nhất chính là lề thân
-    # bài). 1.9.6 đòi MỌI dòng cùng mép nên bỏ sót ô gộp được căn giữa bằng dãy space có số
-    # space khác nhau từng dòng — đo trên 5 job, nới thế này chỉ đụng thêm 2 vùng.
-    return max(span_x, min(l["bbox"][0] for l in lines))
+    # Kẹp "chỉ nâng, không hạ" áp theo TỪNG DÒNG rồi mới lấy min, chứ không kẹp cả vùng bằng
+    # origin của dòng đầu. Mỗi vế giữ đúng một việc:
+    #   `max(origin, ink)` của một dòng — chặn side-bearing âm (chữ như `J`, `f` nghiêng có
+    #      nét thò trái hơn origin vài phần mười pt) kéo base_x đi lạc;
+    #   `min(...)` qua các dòng — về mép trái nhất, tức lề thật của vùng.
+    # Kẹp cả vùng bằng `max(span_x, …)` chỉ kích hoạt được khi dòng ĐẦU nằm phải hơn mực của
+    # một dòng khác, và ở đúng ca đó nó luôn sai: ô bảng gộp mà thứ tự đọc bắt đầu ở cột PHẢI
+    # thì base_x bị ghim vào cột phải, mọi thụt lề `x_i - base_x` hoá âm rồi clamp về 0, cả
+    # khối dồn thành một chồng. Ca thật V5 p6, ô gộp hai hàng `DC Breaker`/`Cycle Life`: dòng
+    # đầu `Dual Pole, 125Vdc,` ở x=297.2 còn `No` của cột giữa ở x=191.0 — base_x thành
+    # 297.2 và `Không` bị nhét vào giữa hai dòng thông số của cột phải.
+    # Đo trên các job: 7 vùng có dòng đầu không phải mép trái nhất.
+    return min(max(l["spans"][0]["origin"][0], l["bbox"][0]) for l in lines)
 
 
 INDENT_MAX_FRAC = 0.25   # thụt lề suy ra không được quá ngần này bề rộng vùng

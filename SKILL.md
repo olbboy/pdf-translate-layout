@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.23"
+  version: "1.9.24"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.23 (engine `1.9.23`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.24 (engine `1.9.24`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -526,6 +526,21 @@ metadata:
 > Cờ cuối cùng là thật và cũng đã sửa: dải khai cho Gate 6 ở 1.9.18 chỉ có khung gạch dẫn
 > MỚI, trong khi tiêu đề dịch dài hơn thì nét mới bắt đầu phải hơn nét cũ — đoạn ở giữa mất
 > chấm vẫn là pixel đổi. Nay khai **hợp** hai khung. V5 `g6_visual` **đỏ → xanh**.
+> **1.9.24** kẹp "chỉ nâng, không hạ" của `ink_base_x` áp theo **TỪNG DÒNG** rồi mới lấy min,
+> thay vì kẹp cả vùng bằng origin dòng đầu. Hai vế giữ hai việc khác nhau: `max(origin, ink)`
+> trong một dòng chặn side-bearing âm (`J`, `f` nghiêng có nét thò trái hơn origin vài phần
+> mười pt); `min(...)` qua các dòng đưa base_x về lề thật của vùng. Kẹp cả vùng chỉ kích hoạt
+> được khi dòng ĐẦU nằm phải hơn mực của một dòng khác — và ở đúng ca đó nó luôn sai.
+> Ca thật V5 p6: `find_tables` gộp hai hàng `DC Breaker`/`Cycle Life` thành một ô (nguồn không
+> kẻ nét ngang giữa chúng ở dải cột ấy). Thứ tự đọc bắt đầu ở **cột phải** — `Dual Pole,
+> 125Vdc,` tại x=297.2 — trong khi `No` của cột giữa ở x=191.0. base_x bị ghim 297.2, mọi thụt
+> lề `x_i - base_x` hoá âm rồi clamp về 0, và cả bốn dòng dồn thành một chồng: `Không` nằm
+> giữa hai dòng thông số của cột phải, `≥6000 chu kỳ` mất tính trải ngang.
+> Đo trên các job: **7 vùng có dòng đầu không phải mép trái nhất, đúng 1 vùng căn trái** — tức
+> bản vá đụng đúng vùng hỏng, sáu vùng kia `center`/`right` neo vào khung nên không dùng
+> base_x.
+> **Lỗi này gate không thấy** — P0/P1/P2 không đổi trước và sau. Nó lộ ra ở **bản so sánh
+> nguồn ↔ bản dịch** mà người duyệt xem trước khi approve.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
