@@ -396,11 +396,22 @@ def run_gates(job: Job) -> None:
                        if not any(abs(c[0] - r[0]) <= 1.5 and abs(c[2] - r[2]) <= 1.5
                                   and abs(c[1] - r[1]) <= 1.5 for r in removed)]
         have_dc = merge_rects([d["rect"] for d in draft[pno].get_drawings()])
+        # Gạch dẫn mục lục bị vẽ lại CÓ CHỦ Ý (nét gốc dừng ở mép tiêu đề tiếng Anh). Trừ cụm
+        # cũ khỏi mốc kỳ vọng VÀ cụm mới khỏi bản đo — cụm nào không khớp một trong hai khung
+        # đã ghi thì vẫn phải khớp như thường.
+        lead = [b for b in (manifest.get("toc_leaders") or []) if b["page"] == pno]
+        if lead:
+            def _at(c, box):
+                return abs(c[1] - box[1]) <= 1.5 and abs(c[3] - box[3]) <= 1.5 \
+                    and c[0] >= box[0] - 1.5 and c[2] <= box[2] + 1.5
+            want_dc = [c for c in want_dc if not any(_at(c, b["old"]) for b in lead)]
+            have_dc = [c for c in have_dc if not any(_at(c, b["new"]) for b in lead)]
         if len(want_dc) != len(have_dc):
             g5_fail += 1
             gi("G5_VECTOR_CLUSTERS", "P1",
                f"draw clusters {len(want_dc)} → {len(have_dc)}"
-               + (f" (đã trừ {len(removed)} gạch ô trống xoá có chủ ý)" if removed else ""),
+               + (f" (đã trừ {len(removed)} gạch ô trống xoá có chủ ý)" if removed else "")
+               + (f" (đã trừ {len(lead)} gạch dẫn vẽ lại)" if lead else ""),
                page=pno)
         want_links = {(l.get("kind"), str(l.get("uri", l.get("page"))))
                       for l in resource["pages"][pno]["links"]}

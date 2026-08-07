@@ -4,6 +4,67 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.18] - 2026-08-07
+
+### Added
+
+- **Contents-page dot leaders are now redrawn.** A leader is line art running
+  from the right edge of the **English** title to the page number: a longer
+  Vietnamese title runs over it, a shorter one leaves a gap. `leader_split`
+  (1.9.13) only ever fixed the columns. The old strokes are now erased (the same
+  line-art redaction pass `fill_rules` uses) and redrawn with the **right edge
+  kept**, moving only the start to follow the translated title — the too-long and
+  too-short cases are symmetric and neither requires guessing a coordinate.
+
+  Narrow signature: strokes under 1.2pt tall, sharing one y, at least one of them
+  **dashed** (table rules and underlines are solid), starting within 12pt of the
+  text, and with **text immediately after the run** — the page number. Without
+  that last condition a figure's callout line matches too (real case: the
+  `Ground` label on V5 p9). Gate 5 and Gate 6 get both the old and the new box in
+  `render_manifest.toc_leaders`, so they subtract exactly those two and nothing
+  else is relaxed. Result on V5: **24 of 24 contents rows** correct.
+
+  One trap, sprung once: `shape.finish` closes the path by default, drawing a
+  return leg from the end point. The return leg is out of phase with the dashes
+  and fills the gaps, so the leader comes out solid — but only on rows whose
+  length divides that way, which makes it very easy to miss.
+
+## [1.9.17] - 2026-08-07
+
+### Fixed
+
+- **A single-line table cell now takes its alignment from the column.** Such a
+  cell has no internal agreement to count, so it must guess from the left and
+  right gaps — and an English line that nearly fills the cell leaves two similar
+  gaps, which the tolerance rule reads as `center`, indistinguishable from a real
+  left alignment. Real case, V5 p8: `Charge / Discharge over Current Protection`
+  fills the cell (gaps 3.2 / 10.9 across 187.1) and came out `center` while the
+  other 7 cells in its column were `left`; the shorter translation then sat
+  visibly indented. 1.9.8 fixed the multi-line case by counting agreeing lines —
+  here the evidence lives *outside* the cell.
+
+  Multi-line cells are left alone, and the thresholds are deliberately high (>=4
+  single-line cells, >=75% agreement) because a column mixing a centred header
+  with left-aligned body text is entirely normal. Measured: V5 18 cells, HV48100
+  23, Pi Station 1.
+
+## [1.9.16] - 2026-08-07
+
+### Fixed
+
+- **`paint_origin_x` now returns the ink edge, not the raw span origin.** Its job
+  is to keep the container around the point where the fitter starts drawing —
+  correct until 1.9.6/1.9.9, when `ink_base_x` began raising `base_x` to the ink
+  edge, so a space-padded origin is no longer where anything gets drawn. The old
+  formula dragged the container left by the full width of the run of spaces. Real
+  cases on V5: the `CANH` cell has 48 leading spaces, so its container fell back
+  to 134.2 while the CAN column starts near 204 — `infer_alignment` read it as
+  `right` and the translation hit the edge of the header band; and the value cell
+  for `Unit Dimension` fell back to 67.7, **overlapping the label cell at
+  `[29.0…121.2]`** and spilling text into it. Stage 2 and stage 6 now agree on
+  what that point is. On V5: 133 space-padded regions, 61 alignment changes, and
+  Gate 4 goes from red to green.
+
 ## [1.9.15] - 2026-08-07
 
 ### Added

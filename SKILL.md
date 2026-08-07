@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.15"
+  version: "1.9.18"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.15 (engine `1.9.15`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.18 (engine `1.9.18`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -442,6 +442,35 @@ metadata:
 > chỉ là bước dự phòng. Chặn thêm thụt lề vô lý (>25% bề rộng vùng) vì vùng hai cột khớp
 > đếm nhưng cho ra 268pt trên khung 366pt. Đo trên các job hiện có: 29 vùng trộn mức thụt,
 > suy được **10 → 19**.
+> **1.9.16** `paint_origin_x` trả **mép mực**, không trả origin thô. Nó có nhiệm vụ cho
+> container bao được điểm mà fitter bắt đầu vẽ — đúng cho tới 1.9.6/1.9.9, từ đó `ink_base_x`
+> nâng base_x lên mép mực nên origin có đệm space không còn là nơi vẽ. Giữ công thức cũ thì
+> container bị kéo sang trái đúng bằng bề rộng dãy space. Ca thật V5: ô `CANH` có 48 space
+> đầu, container tụt về 134.2 trong khi cột CAN bắt đầu ở ~204 — `infer_alignment` đọc thành
+> `right` và bản dịch dính mép dải cam; ô trị số `Unit Dimension` tụt về 67.7, **chồng lên ô
+> nhãn `[29.0…121.2]`** và tràn chữ sang đó. Stage 2 và stage 6 nay hiểu giống nhau về cùng
+> một điểm. Đo trên V5: 133 vùng có đệm space, 61 vùng đổi căn lề, Gate 4 từ đỏ sang xanh.
+> **1.9.17** ô bảng **một dòng** lấy căn lề theo **đồng thuận của cột**. Ô một dòng không có
+> gì đồng thuận nội bộ nên phải đoán từ khe trái/khe phải; dòng tiếng Anh gần đầy ô thì hai
+> khe xấp xỉ nhau và luật dung sai đọc thành `center` — không phân biệt được với căn trái
+> thật. Ca thật V5 p8: `Charge / Discharge over Current Protection` lấp gần kín ô (khe
+> 3.2/10.9 trên 187.1) nên ra `center` trong khi 7 ô còn lại cùng cột đều `left`; bản dịch
+> ngắn hơn nên thụt hẳn vào giữa. 1.9.8 sửa ca nhiều dòng bằng đếm dòng đồng thuận — ở đây
+> bằng chứng nằm NGOÀI ô. Chỉ đụng ô một dòng; ngưỡng >=4 ô và >=75% vì cột trộn tiêu đề căn
+> giữa với thân bài căn trái là chuyện thường. Đo: V5 18 ô, HV48100 23 ô, Pi Station 1 ô.
+> **1.9.18** vẽ lại **nét gạch dẫn mục lục**. Gạch dẫn là line-art vẽ sẵn từ mép phải tiêu đề
+> TIẾNG ANH tới số trang: tiêu đề tiếng Việt dài hơn thì chữ đè lên nét, ngắn hơn thì hở một
+> khoảng. `leader_split` (1.9.13) chỉ tách được cột. Nay xoá nét cũ (cùng cơ chế redaction
+> line-art của `fill_rules`) rồi vẽ lại **giữ nguyên mép phải**, chỉ dời điểm bắt đầu theo mép
+> phải chữ đã dịch — hai ca dài/ngắn đối xứng, không ca nào phải đoán toạ độ.
+> Chữ ký hẹp: nét cao dưới 1.2pt, cùng một y, có ít nhất một đoạn **nét đứt** (vạch kẻ bảng và
+> gạch chân đều liền nét), bắt đầu trong 12pt sau mép chữ, và **phải có chữ ngay sau nét** —
+> số trang. Thiếu vế cuối thì đường chỉ dẫn của hình cũng dính: ca thật V5 p9 nhãn `Ground`.
+> Gate 5 và Gate 6 được ghi cả khung cũ lẫn khung mới trong `render_manifest.toc_leaders` nên
+> trừ đúng hai khung đó, không nới lỏng phép so. Kết quả V5: **24/24 dòng mục lục** đúng chỗ.
+> Bẫy đã sập một lần: `shape.finish` mặc định **đóng đường**, tức vẽ thêm lượt về từ điểm
+> cuối; lượt về lệch pha nét đứt nên lấp kín khe và gạch dẫn thành liền nét — chỉ ở những
+> dòng có chiều dài chia đúng kiểu ấy, nên rất dễ lọt mắt.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

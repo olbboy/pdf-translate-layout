@@ -484,6 +484,72 @@ def _leader_sub(reg: dict, x0: float, x1: float, align: str, line: dict,
     return sub
 
 
+LEADER_MAX_H = 1.2        # nét gạch dẫn mỏng hơn ngần này mới coi là gạch dẫn
+LEADER_MAX_GAP = 12.0     # và phải bắt đầu trong ngần này sau mép chữ nguồn
+LEADER_MIN_LEN = 8.0      # đoạn gạch còn lại ngắn hơn ngần này thì thôi, đừng vẽ
+LEADER_GAP_DEFAULT = 2.0  # khe mặc định khi dòng nguồn đã bị cắt cột, không đo được
+LEADER_TAIL_GAP = 8.0     # số trang phải bắt đầu trong ngần này sau khi nét kết thúc
+
+
+def leader_run(drawings: list, reg: dict, siblings: list) -> dict | None:
+    """Dãy nét gạch dẫn chạy ngay sau chữ nguồn của `reg`, hoặc None.
+
+    Vì sao cần: gạch dẫn mục lục là line-art vẽ sẵn từ mép phải tiêu đề TIẾNG ANH tới số
+    trang. Tiêu đề tiếng Việt dài hơn thì chữ đè lên nét (`1.1 Cấu hình tiêu chuẩn của sản
+    phẩm`), ngắn hơn thì hở một khoảng (`3 Môi trường vận hành`). `leader_split` (1.9.13) chỉ
+    tách được cột — nét gạch nó không đụng tới được.
+
+    Chữ ký: các stroke cao dưới `LEADER_MAX_H`, cùng một y, nằm trong dải dọc của region, bắt
+    đầu trong `LEADER_MAX_GAP` sau mép mực phải, và dãy đó phải chứa ít nhất một đoạn NÉT
+    ĐỨT. Đòi nét đứt để không đụng nhầm vạch kẻ bảng hay gạch chân — chúng liền nét.
+    """
+    if len(reg["lines"]) != 1:
+        return None          # dòng mục lục luôn một dòng; đoạn nhiều dòng không được dính
+    b = reg["bbox"]
+    ink_left = reg["lines"][0]["bbox"][0]
+    seg = [d for d in drawings
+           if d["type"] == "s" and d["rect"].y1 - d["rect"].y0 <= LEADER_MAX_H
+           and b[1] <= (d["rect"].y0 + d["rect"].y1) / 2 <= b[3]
+           and d["rect"].x0 > ink_left]
+    if not seg:
+        return None
+    y = min(seg, key=lambda d: d["rect"].x0)["rect"].y0
+    seg = [d for d in seg if abs(d["rect"].y0 - y) < 0.5]
+    dashed = [d for d in seg if d.get("dashes") not in (None, "", "[] 0")]
+    if not dashed:
+        return None
+    x0 = min(d["rect"].x0 for d in seg)
+    # Khe giữa chữ nguồn và nét: đo trên chính dòng nguồn nào kết thúc TRƯỚC nét. Dòng mục
+    # lục đã bị `leader_split` cắt thì bbox dòng là ranh giới cột, không phải mép chữ — khi
+    # đó dùng khe mặc định. Đo trên 5 job: khe thật luôn quanh 2pt.
+    ends = [l["bbox"][2] for l in reg["lines"] if l["bbox"][2] <= x0 + 0.5]
+    gap = round(x0 - max(ends), 2) if ends else LEADER_GAP_DEFAULT
+    if not 0.0 <= gap <= LEADER_MAX_GAP:
+        return None
+    x1 = max(d["rect"].x1 for d in seg)
+    # Phải có chữ ngay SAU nét trên cùng dòng — đó là số trang. Không có thì nét này là
+    # đường chỉ dẫn của hình, không phải gạch dẫn mục lục: ca thật V5 p9, nhãn `Ground` có
+    # đường nét đứt trỏ sang cọc tiếp địa, dời điểm bắt đầu của nó làm vỡ cụm vector và
+    # Gate 5 báo đỏ.
+    tails = [s["bbox"][0] for s in siblings if s["bbox"][1] <= y <= s["bbox"][3]]
+    # Hoặc số trang là region anh em bắt đầu ngay sau nét, hoặc — khi `leader_split` đã cắt
+    # dòng thành hai cột — nó là cột phải của CHÍNH region này, tức dòng nguồn còn chạy tới
+    # tận cuối nét. Nhãn cạnh hình thì không thoả vế nào: chữ dừng trước khi nét bắt đầu.
+    if not (any(0 <= t - x1 <= LEADER_TAIL_GAP for t in tails)
+            or reg["lines"][0]["bbox"][2] >= x1 - LEADER_TAIL_GAP):
+        return None
+    ref = dashed[0]
+    return {"y": y, "x0": x0, "x1": x1,
+            "rects": [pymupdf.Rect(d["rect"].x0, y - 0.6, d["rect"].x1, y + 0.6) for d in seg],
+            "color": ref["color"], "width": ref.get("width") or 0.7,
+            "dashes": ref["dashes"], "gap": gap}
+
+
+def painted_right(fr: dict) -> float:
+    """Mép phải xa nhất của chữ đã fit — gạch dẫn phải bắt đầu sau điểm này."""
+    return max((l["x"] + l["width"] for l in fr["lines"]), default=0.0)
+
+
 def fit_region(reg: dict, pack: FontPack, cfg: dict,
                expand_ctx: dict | None = None) -> tuple[dict | None, list]:
     """→ (fit_result, issues). None nếu không có layout hợp lệ (fail-closed).
@@ -866,6 +932,7 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
     issues: list[dict] = []
     manifest = {"generated_at": utc_now(), "partial": bool(pending or pages_filter),
                 "pages": {}, "regions": [], "skipped": [], "blank_rules_removed": [],
+                "toc_leaders": [],
                 "issues": issues}
 
     doc = pymupdf.open(job.source_pdf)
@@ -960,6 +1027,21 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         if not ok_regions:
             continue
 
+        # Gạch dẫn mục lục: xoá nét cũ ở đây, vẽ lại sau khi đặt chữ. Phải xoá TRƯỚC
+        # `apply_redactions` vì lượt đó mới thật sự bỏ line-art; vẽ lại thì phải sau khi
+        # `insert_text` xong, nếu không nét mới bị chính redaction ăn mất.
+        page_draw = page.get_drawings() if cfg.get("layout", {}).get("toc_leader", True) else []
+        leaders = []
+        # Anh em đo theo DÒNG nguồn của mọi region trên trang, kể cả region `keep` không
+        # vẽ: số trang mục lục thường là `keep`, và ở dòng mục lục mà PDF khai hai "line"
+        # cùng một y thì số trang là dòng thứ hai của chính region ấy — bbox mức region
+        # không thấy được cả hai ca.
+        sib = [{"bbox": l["bbox"]} for r in regions if r["page"] == pno for l in r["lines"]]
+        for reg, fr in ok_regions:
+            run = leader_run(page_draw, reg, sib) if page_draw else None
+            if run:
+                leaders.append((reg, painted_right(fr) + run["gap"], run))
+
         for rect in page_masks:
             page.add_redact_annot(rect, fill=False)  # no-fill: giữ background (spec §9.2)
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
@@ -984,6 +1066,14 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             manifest["blank_rules_removed"] += [
                 {"page": pno, "region_id": reg["region_id"],
                  "rect": [round(v, 2) for v in r]} for reg, r in blanks]
+        if leaders:
+            for _, _, run in leaders:
+                for r in run["rects"]:
+                    page.add_redact_annot(r, fill=False)
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                                  text=pymupdf.PDF_REDACT_TEXT_NONE)
+
         missing_blank = [reg["region_id"] for reg, _ in ok_regions
                          if reg.get("fill_rules")
                          and not BLANK_RUN_RE.search(
@@ -1019,6 +1109,36 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                 "fonts": sorted({s["font"] for l in fr["lines"] for s in l["segments"]}),
             })
 
+        drawn: list[dict] = []
+        # Vẽ lại gạch dẫn: giữ nguyên mép PHẢI của nét gốc, chỉ dời điểm bắt đầu theo mép
+        # phải của chữ đã dịch. Tiêu đề dịch dài hơn thì nét ngắn lại, ngắn hơn thì nét dài
+        # ra — hai ca đối xứng, không ca nào cần đoán toạ độ.
+        for reg, x0, run in leaders:
+            if run["x1"] - x0 < LEADER_MIN_LEN:
+                issues.append(make_issue(
+                    "TOC_LEADER_DROPPED", "P2", STAGE,
+                    f"bản dịch chạm tới số trang, không còn chỗ vẽ gạch dẫn "
+                    f"(còn {run['x1'] - x0:.1f}pt)", page=pno, region_id=reg["region_id"]))
+                continue
+            shape = page.new_shape()
+            shape.draw_line(pymupdf.Point(x0, run["y"]), pymupdf.Point(run["x1"], run["y"]))
+            # Vẽ đường HỞ. Mặc định của pymupdf là đóng đường, tức vẽ thêm lượt về từ điểm
+            # cuối; lượt về lệch pha nét đứt nên lấp kín khe — gạch dẫn thành liền nét ở
+            # đúng những dòng mà chiều dài chia hết kiểu ấy, dòng khác thì không.
+            shape.finish(color=run["color"], width=run["width"], dashes=run["dashes"],
+                         closePath=False)
+            shape.commit()
+            # Dải gạch dẫn là vùng engine CỐ Ý vẽ lại — Gate 5 và Gate 6 phải biết, nếu
+            # không thì cụm vector đổi và pixel lệch đều bị báo như hỏng hóc. Ghi cả khung
+            # cũ lẫn khung mới: gate trừ đúng hai khung đó, không nới lỏng phép so.
+            drawn.append({"page": pno, "region_id": reg["region_id"],
+                          "old": [round(run["x0"], 2), round(run["y"] - 0.6, 2),
+                                  round(run["x1"], 2), round(run["y"] + 0.6, 2)],
+                          "new": [round(x0, 2), round(run["y"] - 0.6, 2),
+                                  round(run["x1"], 2), round(run["y"] + 0.6, 2)]})
+        manifest["toc_leaders"] += drawn
+        leader_bands = [d["new"] for d in drawn]
+
         # link preservation (spec §9.4)
         if cfg["render"]["preserve_links"]:
             after = page.get_links()
@@ -1043,7 +1163,7 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         manifest["pages"][str(pno)] = {
             "painted_regions": len(ok_regions),
             "mask_rects": [[round(v, 2) for v in (m.x0, m.y0, m.x1, m.y1)]
-                           for m in page_masks],
+                           for m in page_masks] + leader_bands,
             "text_rects": [painted_rect(l, fr2)
                            for _, fr2 in ok_regions for l in fr2["lines"]],
         }

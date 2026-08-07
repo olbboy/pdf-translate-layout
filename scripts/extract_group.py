@@ -194,6 +194,51 @@ def infer_alignment(lines: list, container: list) -> str:
     return "left"
 
 
+COLUMN_MIN_CELLS = 4      # cột phải có ngần này ô một dòng mới đủ làm bằng chứng
+COLUMN_MIN_AGREE = 0.75   # và ngần này phần đồng thuận
+
+
+def column_consensus(regions: list) -> int:
+    """Ô bảng MỘT DÒNG lấy alignment theo đồng thuận của cột. → số ô đã đổi.
+
+    Vì sao cần: ô một dòng không có gì để đồng thuận nội bộ, nên `infer_alignment` phải đoán
+    từ khe trái/khe phải. Dòng tiếng Anh gần đầy ô thì hai khe xấp xỉ nhau và luật dung sai
+    đọc thành `center` — không phân biệt được với căn trái thật. Ca thật V5 p8:
+    `Charge / Discharge over Current Protection` lấp gần kín ô (khe 3.2 / 10.9 trên bề rộng
+    187.1) nên ra `center`, trong khi 7 ô còn lại cùng cột đều `left`; bản dịch ngắn hơn nên
+    thụt hẳn vào giữa, lệch với cả cột.
+
+    1.9.8 đã sửa ca nhiều dòng bằng cách đếm số dòng đồng thuận. Ở đây bằng chứng nằm ngoài
+    ô: các ô CÙNG CỘT gần như luôn cùng một cách căn.
+
+    Chỉ đụng ô một dòng — ô nhiều dòng có bằng chứng nội bộ thật, để nguyên. Ngưỡng đặt cao
+    (>=4 ô, >=75%) vì cột trộn tiêu đề căn giữa với thân bài căn trái là chuyện thường: cột
+    `Specifications` của chính trang đó chỉ có 3 ô một dòng (2 center, 1 left) và cả ba đều
+    đang đúng — nới ngưỡng xuống là phá nó.
+    """
+    cols: dict[tuple, list] = {}
+    for r in regions:
+        if r["region_type"] != "table_cell" or len(r["lines"]) != 1:
+            continue
+        c = r["container"]
+        cols.setdefault((round(c[0], 1), round(c[2], 1)), []).append(r)
+    changed = 0
+    for cells in cols.values():
+        if len(cells) < COLUMN_MIN_CELLS:
+            continue
+        tally: dict[str, int] = {}
+        for r in cells:
+            tally[r["alignment"]] = tally.get(r["alignment"], 0) + 1
+        win, n = max(tally.items(), key=lambda kv: kv[1])
+        if n / len(cells) < COLUMN_MIN_AGREE:
+            continue
+        for r in cells:
+            if r["alignment"] != win:
+                r["alignment"] = win
+                changed += 1
+    return changed
+
+
 def build_runs(all_spans: list) -> list:
     runs, cur = [], None
     for sp in all_spans:
@@ -379,14 +424,23 @@ def split_multicol_rows(lines: list, tables: list, rules: list, issues: list, pn
 
 
 def paint_origin_x(reg: dict) -> float:
-    """x mà fitter bắt đầu vẽ — origin của span đầu, KHÔNG phải mép ink.
+    """x mà fitter THẬT SỰ bắt đầu vẽ. Phải khớp `fit_paint.ink_base_x`.
 
-    Space đầu dòng không tính vào bbox (xem `ink_bbox`) nhưng vẫn là nơi text bắt đầu:
-    `fit_paint` vẽ từ `base_x = lines[0].spans[0].origin`. Container không bao được điểm
-    này thì mọi dòng thụt đầu — 19 dòng mục lục của Lite manual — thành
-    `G4_OUT_OF_CONTAINER` phía trái dù chữ nằm đúng chỗ cũ.
+    Container phải bao được điểm này, nếu không mọi dòng thụt đầu — 19 dòng mục lục của
+    Lite manual — thành `G4_OUT_OF_CONTAINER` phía trái dù chữ nằm đúng chỗ cũ.
+
+    Nguyên bản trả thẳng origin của span đầu. Đúng cho tới 1.9.6/1.9.9: từ đó `ink_base_x`
+    NÂNG base_x lên mép mực trái nhất, nên origin có đệm space không còn là nơi vẽ. Giữ công
+    thức cũ thì container bị kéo sang trái đúng bằng bề rộng dãy space. Ca thật V5: ô `CANH`
+    có 48 space đầu, container tụt về 134.2 trong khi cột CAN bắt đầu ở ~204 — ô căn giữa bị
+    đọc thành `right` và bản dịch dính mép dải cam; ô trị số `Kích thước một khối` tụt về
+    67.7, chồng lên ô nhãn `[29.0…121.2]` và tràn chữ sang đó.
+
+    Stage 2 và stage 6 phải hiểu giống nhau về cùng một điểm — nên công thức lặp lại
+    `ink_base_x`, không import chéo (stage 2 không phụ thuộc stage 6).
     """
-    return reg["lines"][0]["spans"][0]["origin"][0]
+    span_x = reg["lines"][0]["spans"][0]["origin"][0]
+    return max(span_x, min(l["bbox"][0] for l in reg["lines"]))
 
 
 def compute_container(reg: dict, obstacles: list, page_rect: list, lh: float) -> None:
@@ -559,6 +613,8 @@ def extract(job: Job) -> None:
                 others = [r["bbox"] for r in ordered if r is not reg]
                 compute_container(reg, others + obstacles_all, list(page.rect), lh)
             reg["alignment"] = infer_alignment(reg["lines"], reg["container"])
+        column_consensus(ordered)
+        for idx, reg in enumerate(ordered):
             # Ô trống điền tay — metadata thuần, KHÔNG đụng source_text/source_hash/region_id
             # nên job đã dịch chạy lại stage 2 không bị mồ côi response.
             fr = fill_in_rules(reg, page_hrules)

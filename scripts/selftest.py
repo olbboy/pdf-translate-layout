@@ -886,6 +886,52 @@ check("mục lục: ô bảng để column_split lo, không đụng",
       _fp.leader_split(_toc_reg(_two, [{"role": "body", "text": "a\nb"}], "table_cell"),
                        _fp.FontPack()) is None)
 
+# ── vẽ lại nét gạch dẫn mục lục (1.9.18) ────────────────────────────────
+# Gạch dẫn là line-art vẽ từ mép phải tiêu đề TIẾNG ANH tới số trang. Tiêu đề tiếng Việt dài
+# hơn thì chữ đè lên nét, ngắn hơn thì hở khoảng. `leader_split` chỉ tách được cột.
+import pymupdf as _mu  # noqa: E402
+
+
+def _stroke(x0, x1, y, dashes="[ 1.414 1.414 ] 0"):
+    return {"type": "s", "rect": _mu.Rect(x0, y, x1, y), "dashes": dashes,
+            "color": (0.1, 0.05, 0.05), "width": 0.709}
+
+
+def _toc_row(x0=45.7, x1=129.4, y0=95.5, y1=111.2, nlines=1):
+    return {"bbox": [x0, y0, x1, y1], "container": [x0, y0, 374.0, y1 + 1.5],
+            "lines": [{"bbox": [x0, y0, x1, y1]}] * nlines}
+
+
+_dr = [_stroke(131.67, 132.38, 103.89, "[] 0"), _stroke(133.79, 370.58, 103.89),
+       _stroke(371.29, 372.0, 103.89, "[] 0")]
+_NUM = [{"bbox": [374.4, 95.7, 380.6, 110.7]}]   # số trang ngay sau nét
+_run = _fp.leader_run(_dr, _toc_row(), _NUM)
+check("gạch dẫn: bắt được dãy nét sau tiêu đề, giữ mép phải",
+      _run is not None and abs(_run["x1"] - 372.0) < 0.01 and abs(_run["gap"] - 2.27) < 0.01,
+      str(_run and (_run["x1"], _run["gap"])))
+check("gạch dẫn: xoá cả ba nét, không sót đầu mẩu",
+      _run and len(_run["rects"]) == 3)
+# Vạch kẻ bảng và gạch chân đều LIỀN nét — đòi nét đứt để không đụng nhầm.
+check("gạch dẫn: nét liền không phải gạch dẫn",
+      _fp.leader_run([_stroke(131.67, 372.0, 103.89, "[] 0")], _toc_row(), _NUM) is None)
+check("gạch dẫn: region nhiều dòng không đụng",
+      _fp.leader_run(_dr, _toc_row(nlines=3), _NUM) is None)
+# Nét nằm xa mép chữ thì là thứ khác — vd gạch trang trí ở cột bên.
+check("gạch dẫn: khe quá rộng thì bỏ",
+      _fp.leader_run([_stroke(200.0, 372.0, 103.89)], _toc_row(), _NUM) is None)
+check("gạch dẫn: nét bắt đầu TRƯỚC chữ thì không phải của vùng này",
+      _fp.leader_run([_stroke(20.0, 372.0, 103.89)], _toc_row(), _NUM) is None)
+# Không có chữ sau nét = đường chỉ dẫn của hình, không phải gạch dẫn mục lục.
+check("gạch dẫn: không có số trang sau nét thì không đụng (đường chỉ dẫn hình)",
+      _fp.leader_run(_dr, _toc_row(), []) is None)
+check("gạch dẫn: mép phải chữ đã fit đo trên dòng dài nhất",
+      abs(_fp.painted_right({"lines": [{"x": 45.7, "width": 60.0},
+                                       {"x": 45.7, "width": 91.2}]}) - 136.9) < 0.01)
+# Mặc định của pymupdf là ĐÓNG đường: vẽ thêm lượt về, lệch pha nét đứt nên lấp kín khe và
+# gạch dẫn thành LIỀN nét — chỉ ở những dòng có chiều dài chia đúng kiểu ấy, nên rất dễ lọt.
+check("gạch dẫn: vẽ đường hở, không đóng đường",
+      "closePath=False" in _fpsrc)
+
 # ── vùng bảo vệ đo theo nét mực, không theo bbox có đệm space (1.9.12) ──
 # Ca thật V5 Series p10: ô nhãn một hàng bảng là 26 ký tự space, bbox rộng 123pt, "bảo vệ"
 # chỗ trống rỗng và ép mask của ô kề bên cắt ngắn → chữ nguồn còn nguyên, bản dịch vẽ chồng.
@@ -1001,6 +1047,58 @@ check("căn lề: hai dòng không mốc nào đồng thuận thì giữ luật 
       _eg.infer_alignment([_ln(120.0, 300.0), _ln(150.0, 290.0)], _CONT) == "center")
 check("căn lề: region một dòng không đụng tới nhánh mới",
       _eg.infer_alignment([_ln(30.0, 200.0)], _CONT) == "left")
+
+# ── điểm vẽ thật = mép mực, không phải origin có đệm space (1.9.16) ─────
+# `ink_base_x` của stage 6 nâng base_x lên mép mực từ 1.9.6/1.9.9; stage 2 vẫn trả origin
+# thô nên container ô bảng bị kéo sang trái đúng bề rộng dãy space. Ca thật V5: ô `CANH`
+# 48 space đầu kéo container về 134.2 trong khi cột CAN bắt đầu ở ~204.
+_pad = {"lines": [{"bbox": [241.0, 0.0, 263.6, 10.0],
+                   "spans": [{"origin": [134.2, 8.0]}]}]}
+check("điểm vẽ: ô có đệm space lấy mép mực, không lấy origin",
+      abs(_eg.paint_origin_x(_pad) - 241.0) < 0.01, str(_eg.paint_origin_x(_pad)))
+_noPad = {"lines": [{"bbox": [30.0, 0.0, 90.0, 10.0], "spans": [{"origin": [30.0, 8.0]}]},
+                    {"bbox": [42.0, 0.0, 88.0, 10.0], "spans": [{"origin": [42.0, 8.0]}]}]}
+check("điểm vẽ: không đệm thì vẫn là origin dòng đầu",
+      abs(_eg.paint_origin_x(_noPad) - 30.0) < 0.01)
+# Dòng sau thụt trái hơn origin dòng đầu: chỉ NÂNG, không bao giờ hạ — khớp `ink_base_x`.
+_deep = {"lines": [{"bbox": [50.0, 0.0, 90.0, 10.0], "spans": [{"origin": [50.0, 8.0]}]},
+                   {"bbox": [30.0, 0.0, 88.0, 10.0], "spans": [{"origin": [30.0, 8.0]}]}]}
+check("điểm vẽ: chỉ nâng, không hạ dưới origin dòng đầu",
+      abs(_eg.paint_origin_x(_deep) - 50.0) < 0.01, str(_eg.paint_origin_x(_deep)))
+
+# ── ô bảng một dòng lấy căn lề theo đồng thuận của cột (1.9.17) ─────────
+# Ô một dòng không có gì đồng thuận nội bộ. Dòng tiếng Anh gần đầy ô thì hai khe xấp xỉ
+# nhau, luật dung sai đọc thành `center`. Ca thật V5 p8: 7 ô cùng cột `left`, một ô `center`.
+
+
+def _cell(align, x0=29.9, x1=217.0, nlines=1):
+    return {"region_type": "table_cell", "alignment": align, "container": [x0, 0.0, x1, 10.0],
+            "lines": [{"bbox": [0, 0, 1, 1]}] * nlines}
+
+
+_col = [_cell("left") for _ in range(6)] + [_cell("center")]
+check("căn lề cột: ô lạc bị cả cột kéo về",
+      _eg.column_consensus(_col) == 1 and all(c["alignment"] == "left" for c in _col))
+# Cột trộn tiêu đề căn giữa + thân bài căn trái, chỉ 3 ô một dòng — bằng chứng chưa đủ.
+_few = [_cell("center"), _cell("center"), _cell("left")]
+check("căn lề cột: dưới 4 ô một dòng thì không đụng",
+      _eg.column_consensus(_few) == 0 and _few[2]["alignment"] == "left")
+_split = [_cell("center"), _cell("center"), _cell("left"), _cell("left")]
+check("căn lề cột: đồng thuận dưới 75% thì không đụng",
+      _eg.column_consensus(_split) == 0)
+# Ô nhiều dòng có bằng chứng nội bộ thật — không được đụng, và không được tính phiếu.
+_multi = [_cell("left") for _ in range(4)] + [_cell("center", nlines=3)]
+check("căn lề cột: ô nhiều dòng không bị đụng",
+      _eg.column_consensus(_multi) == 0 and _multi[4]["alignment"] == "center")
+# Cột khác thì không lây phiếu sang nhau.
+_two = [_cell("left") for _ in range(4)] + [_cell("center", x0=250.0, x1=390.0)]
+check("căn lề cột: hai cột khác nhau tính riêng",
+      _eg.column_consensus(_two) == 0 and _two[4]["alignment"] == "center")
+# Hàm đúng mà pipeline không gọi thì vô dụng — và đây là lỗi im lặng, không test nào khác bắt.
+check("căn lề cột: stage 2 thật sự gọi đồng thuận sau khi gán alignment",
+      "column_consensus(ordered)" in open(
+          os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "extract_group.py"),
+          encoding="utf-8").read())
 
 # ── role của tiêu đề phụ in đậm mở đầu region (1.9.7) ───────────────────
 # Bản gốc gộp tiêu đề phụ in đậm + văn xuôi vào một block. Luật cũ chỉ cho `emphasis` khi
