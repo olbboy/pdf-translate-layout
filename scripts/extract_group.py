@@ -188,12 +188,25 @@ def build_runs(all_spans: list) -> list:
             cur = {"_key": key, "text": sp["text"], **st,
                    "size": round(sp["size"], 1), "color": sp["color"], "font": sp["font"]}
             runs.append(cur)
+    # Tiêu đề phụ in đậm MỞ ĐẦU region cũng là `emphasis`, không phải `body`.
+    # Bản gốc hay gộp tiêu đề phụ in đậm ("Danger", "General Requirements", "Cleaning")
+    # và cả đoạn văn xuôi theo sau vào MỘT block, nên chúng thành một region. Luật cũ chỉ
+    # cho `emphasis` khi `i > 0`, nên run 0 in đậm rơi về `body`; `role_style()` của stage 6
+    # lấy run ĐẦU TIÊN khớp role, tức run đậm đó, rồi vẽ CẢ VÙNG bằng chữ đậm.
+    # Đo được trên HV48100 user manual: 59 region dính, chứa 46% tổng ký tự — bản dịch ra
+    # 50% ký tự Noto Sans Bold trong khi bản đã phát hành trước đó chỉ 13%.
+    # Điều kiện `lead_in`: run 0 in đậm VÀ còn ít nhất một run thường phía sau. Region đậm
+    # toàn bộ (tiêu đề thật) không thoả, nên vẫn vẽ đậm nguyên như cũ.
+    lead_in = bool(runs) and runs[0]["bold"] and any(not r["bold"] for r in runs[1:])
     for i, r in enumerate(runs):
         r.pop("_key")
         r["role"] = ("label" if i == 0 and r["bold"] and len(runs) > 1
                      and r["text"].rstrip().endswith(":")
-                     else "emphasis" if r["bold"] and i > 0 else "body")
-    if runs and not any(r["role"] == "label" for r in runs):
+                     else "emphasis" if r["bold"] and (i > 0 or lead_in) else "body")
+    # Bất biến: luôn còn ít nhất một run `body` để `role_style()` có chỗ bám và để response
+    # chỉ dùng `body` vẫn hợp lệ. Luật cũ ép cứng run 0 về `body` khi không có `label` —
+    # chính chỗ đó vô hiệu hoá `emphasis` của tiêu đề phụ mở đầu.
+    if runs and not any(r["role"] == "body" for r in runs):
         runs[0]["role"] = "body"
     return runs
 

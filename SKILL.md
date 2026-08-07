@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.6"
+  version: "1.9.7"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.6 (engine `1.9.6`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.7 (engine `1.9.7`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -323,6 +323,24 @@ metadata:
 > thiết kế riêng, chưa làm.
 > Không đụng `region_id`, không đụng `container`, không đụng bản dịch — job cũ chỉ cần chạy
 > lại stage 6-7.
+> **1.9.7** `emphasis` nhận cả **tiêu đề phụ in đậm MỞ ĐẦU region**. Bản gốc hay gộp tiêu
+> đề phụ in đậm (`Danger`, `General Requirements`, `Cleaning`, `WARNING`) và cả đoạn văn
+> xuôi theo sau vào MỘT block rawdict, nên chúng thành một region. Luật cũ trong
+> `build_runs` chỉ cho `emphasis` khi `i > 0`, còn dòng cuối `if not any(role == "label")
+> : runs[0]["role"] = "body"` ép cứng run 0 về `body`. `role_style()` của stage 6 lấy run
+> **đầu tiên** khớp role, tức chính run đậm đó, rồi vẽ **CẢ VÙNG** bằng chữ đậm.
+> Đo trên HV48100 user manual: **59 region dính, chứa 46% tổng ký tự**; bản dịch ra **50%
+> ký tự Noto Sans Bold** trong khi bản gốc chỉ 4.5% (`Arial-BoldMT` 2848 / `ArialMT`
+> 60144) và bản V16 Lite đã phát hành là 13%.
+> Nay: run 0 in đậm **có ít nhất một run thường phía sau** (`lead_in`) → `emphasis`. Region
+> đậm toàn bộ — tiêu đề thật — không thoả điều kiện nên vẫn vẽ đậm nguyên như cũ. Bất biến
+> "luôn còn ít nhất một run `body`" giữ nguyên nhưng diễn đạt lại cho đúng: kiểm `body` chứ
+> không kiểm `label`.
+> Kết quả sau khi chạy lại HV48100: **chữ đậm 50% → 4%**, khớp bản gốc.
+> **Đổi `regions.json` nhưng KHÔNG đổi `region_id` hay `source_hash`** — đo trên job thật:
+> 0 region_id mất, 0 mới, 0 source_hash đổi, `responses.jsonl` không mồ côi. Job cũ chạy lại
+> stage 2 → 2.5 → 3 → 5 → 6 → 7; response chỉ dùng role `body` vẫn hợp lệ vì `body` luôn có
+> trong `style_roles`, chỉ là mất phần in đậm cho tới khi bản dịch tách run.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.7] - 2026-08-07
+
+### Fixed
+
+- **A bold sub-heading that *opens* a region now gets the `emphasis` role.** Source
+  documents often put a bold sub-heading (`Danger`, `General Requirements`,
+  `Cleaning`, `WARNING`) and the prose that follows it into a single rawdict
+  block, so they become one region. The old rule in `build_runs` only granted
+  `emphasis` when `i > 0`, and its closing line — `if not any(role == "label"):
+  runs[0]["role"] = "body"` — forced run 0 back to `body`. Stage 6's
+  `role_style()` returns the **first** run matching a role, which was that bold
+  run, so the **entire region** painted bold.
+
+  Measured on an HV48100 user manual: **59 regions affected, holding 46% of all
+  characters**; the translation came out **50% Noto Sans Bold** where the source
+  is 4.5% bold (`Arial-BoldMT` 2848 vs `ArialMT` 60144) and an already-released
+  sibling document sits at 13%.
+
+  Now a bold run 0 **followed by at least one non-bold run** (`lead_in`) becomes
+  `emphasis`. A fully bold region — a real heading — does not qualify and still
+  paints bold as before. The "there is always at least one `body` run" invariant
+  is kept, but stated correctly: it checks for `body`, not for `label`.
+
+  After re-running the job: **bold went from 50% to 4%**, matching the source.
+
+  This changes `regions.json` but **not `region_id` or `source_hash`** — measured
+  on a real job: 0 region ids lost, 0 new, 0 hashes changed, no orphaned
+  responses. Existing jobs re-run stages 2 → 2.5 → 3 → 5 → 6 → 7. A response that
+  only uses `body` stays valid, because `body` is always present in
+  `style_roles`; it simply renders without the bold until the translation splits
+  its runs.
+
 ## [1.9.6] - 2026-08-07
 
 ### Fixed

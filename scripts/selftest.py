@@ -817,6 +817,35 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── role của tiêu đề phụ in đậm mở đầu region (1.9.7) ───────────────────
+# Bản gốc gộp tiêu đề phụ in đậm + văn xuôi vào một block. Luật cũ chỉ cho `emphasis` khi
+# i > 0 nên run 0 in đậm rơi về `body`, rồi `role_style()` lấy nó làm style cho CẢ VÙNG.
+import extract_group as _eg  # noqa: E402
+
+
+def _span(text, bold, x=0.0):
+    return {"text": text, "font": "Arial-BoldMT" if bold else "ArialMT", "size": 9.0,
+            "color": 0, "flags": 16 if bold else 0, "origin": (x, 10.0),
+            "bbox": (x, 0.0, x + 10.0, 10.0)}
+
+
+_roles = lambda spans: [r["role"] for r in _eg.build_runs(spans)]  # noqa: E731
+
+check("role: tiêu đề phụ đậm mở đầu → emphasis, thân bài → body",
+      _roles([_span("Danger", True), _span("Ensure that power is off.", False)])
+      == ["emphasis", "body"])
+check("role: nhãn đậm kết thúc bằng ':' vẫn là label",
+      _roles([_span("Statement:", True), _span("nội dung", False)]) == ["label", "body"])
+check("role: region đậm toàn bộ vẫn là body (tiêu đề thật, vẫn vẽ đậm)",
+      _roles([_span("2 Product Description", True)]) == ["body"])
+check("role: run đậm ở giữa vẫn là emphasis như cũ",
+      _roles([_span("mở", False), _span("ĐẬM", True), _span("kết", False)])
+      == ["body", "emphasis", "body"])
+check("role: luôn còn ít nhất một run body",
+      "body" in _roles([_span("Danger", True), _span("thân bài", False)]))
+check("role: đậm mở đầu nhưng sau toàn đậm thì không đổi vai",
+      _roles([_span("A", True), _span("B", True)]) == ["body"])
+
 # ── base_x theo nét mực, không theo origin có đệm space (1.9.6) ─────────
 # Bản gốc căn chữ bằng dãy space; space có advance nhưng không vẽ gì, còn tokenize thì bỏ
 # sạch token khoảng trắng — nên bản dịch bị kéo về đầu dãy space. Ca thật V5 Series: ô
