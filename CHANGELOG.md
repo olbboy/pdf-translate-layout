@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.10] - 2026-08-07
+
+### Fixed
+
+- **A single-line source now prefers staying on one line**, shrinking within
+  `minimum_ratio` rather than wrapping. A cell's vertical budget usually fits two
+  lines, so the fitter stopped at full size with a two-line layout. Real case: a
+  heading needing 66.28pt inside a 66.0pt box — **0.28pt short** — was broken in
+  two when a 0.5% shrink would have fit. If one line is impossible even at the
+  floor, the old behaviour returns; nothing is forced.
+
+  Also: a single-line source that still has to wrap now counts as `poor_fit`, so
+  `expand_heading` gets a chance. Previously the two-line fallback carried
+  `ratio = 1.0`, so expansion never triggered.
+
+  Measured over 863 single-line-source regions across 5 jobs: **16 → 5 still
+  wrap**; 47 keep one line by shrinking. Cost: `FONT_RATIO_HARD` 3 → 5 and
+  `FONT_RATIO_REVIEW` 18 → 19 in one job — reviewer flags, not defects.
+
+- Corrected the `ink_base_x` docstring, which still described the 1.9.6 guard
+  after 1.9.9 relaxed it.
+
 ## [1.9.9] - 2026-08-07
 
 ### Fixed

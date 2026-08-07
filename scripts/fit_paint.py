@@ -154,10 +154,11 @@ def ink_base_x(reg: dict, span_x: float) -> float:
     Cùng lớp lỗi 1.8.0 đã sửa một nửa: hồi đó cho `build_lines` đo `ink_bbox` để khung ô
     thôi phình ra vì space đầu/đuôi — nhưng `base_x` vẫn lấy từ origin có đệm.
 
-    Guard: CHỈ nâng base_x cho region một dòng, hoặc region mà mọi dòng bắt đầu ở cùng một
-    x (±1pt). Văn xuôi nhiều dòng có thụt lề dòng đầu — kiểu danh sách gạch đầu dòng — thì
-    dời `base_x` sẽ thụt cả khối, tức là đổi một lỗi lấy một lỗi. Chỉ nâng, không bao giờ
-    hạ: nét mực không thể nằm trái hơn origin.
+    Guard: lấy mép mực TRÁI NHẤT trong các dòng, và CHỈ nâng, không bao giờ hạ. Nhờ vậy
+    không bao giờ vẽ trái hơn chữ nguồn của bất kỳ dòng nào — văn xuôi có thụt lề dòng đầu
+    (kiểu danh sách gạch đầu dòng) vẫn an toàn vì mép trái nhất chính là lề thân bài.
+    1.9.6 từng đòi MỌI dòng cùng một mép; 1.9.9 nới ra vì luật đó bỏ sót ô gộp căn giữa
+    bằng dãy space có số space khác nhau từng dòng.
     """
     lines = reg.get("lines") or []
     if not lines:
@@ -404,7 +405,7 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     # hàng bảng bên dưới — nguồn của phần lớn G4_OUT_OF_CONTAINER.
     avail_h = max(1.0, c[3] - base_y) if reg["rotation"] == 0 else chh
 
-    def layout_at(s: float):
+    def layout_at(s: float, cap_one_line: bool = False):
         widths = [pack.font(k).text_length(t["text"], fontsize=s)
                   for t, k in zip(tokens, tok_font)]
         # Khe SAU token i được vẽ bằng font của token i (segment gộp `t1 + " " + t2` bằng
@@ -432,20 +433,22 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         # không bao giờ lệch nhau.
         budget = avail_h + (desc_tol_em - INK_DESCENT_EM) * s
         max_lines = max(1, int(budget // (leading_ratio * s)) + 1)
+        if cap_one_line and n > 1:
+            return None
         if single_line_src and n > max_lines:
             return None
         if (n - 1) * leading_ratio * s > budget:
             return None
         return {"lines": lines, "widths": widths, "space_ws": space_ws}
 
-    def run_search():
+    def run_search(cap_one_line: bool = False):
         lo, hi, best_, s_ = floor, src_size, None, None
-        if layout_at(hi):
-            return layout_at(hi), hi
+        if layout_at(hi, cap_one_line):
+            return layout_at(hi, cap_one_line), hi
         for _ in range(24):  # binary search max size thỏa constraints (spec §6.8)
             mid = (lo + hi) / 2
-            if layout_at(mid):
-                lo, best_, s_ = mid, layout_at(mid), mid
+            if layout_at(mid, cap_one_line):
+                lo, best_, s_ = mid, layout_at(mid, cap_one_line), mid
             else:
                 hi = mid
             if hi - lo < 0.05:
@@ -453,11 +456,23 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         return best_, s_
 
     align = reg["alignment"]
-    best, s_fit = run_search()
+    # Nguồn một dòng thì ƯU TIÊN giữ một dòng: thà thu cỡ chữ trong giới hạn còn hơn xuống
+    # dòng. Ngân sách dọc của ô thường chứa được hai dòng, nên fitter cũ dừng ngay ở cỡ đầy
+    # với bố cục hai dòng. Ca thật: `4.2.1 Tools` → `4.2.1 Dụng cụ` rộng 66.28pt trong khung
+    # 66.0pt — thiếu 0.28pt mà tiêu đề bị bẻ đôi, trong khi thu 0.5% là vừa.
+    # Không vừa nổi một dòng ngay ở sàn `minimum_ratio` thì quay lại luật cũ, không ép.
+    best, s_fit = (run_search(True) if single_line_src else (None, None))
+    if best is None:
+        best, s_fit = run_search()
     # Nới khung cũng phải kích hoạt khi heading CHỈ bị co chữ, không riêng khi fit thất bại
     # hẳn: "7.1 Unable to Start" → "7.1 Không Khởi Động Được" tụt còn 86.4% cỡ chữ (P1
     # FONT_RATIO_HARD) trong khi bên phải nó cả dải ngang là khoảng trắng.
     poor_fit = best is not None and s_fit / src_size < cfg["fonts"]["review_below_ratio"]
+    # Nguồn một dòng mà phải xuống dòng cũng là "fit kém": nới khung là cách duy nhất còn
+    # lại để giữ đúng một dòng như bản gốc. Không có nhánh này thì bản dự phòng hai dòng ở
+    # cỡ đầy có `ratio = 1.0`, `poor_fit` False, và nới khung không bao giờ được thử.
+    if single_line_src and best is not None and len(best["lines"]) > 1:
+        poor_fit = True
     if (best is None or poor_fit) and expand_ctx and expandable_region(reg):
         # Bề rộng cần cho một dòng ở đúng cỡ chữ nguồn (heading luôn một dòng).
         need_w = (sum(pack.font(k).text_length(t["text"], fontsize=src_size)
