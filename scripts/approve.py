@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import shutil
 import sys
 
@@ -15,6 +16,46 @@ from _common import (BlockingError, Job, append_jsonl, exit_blocking, load_json,
                      sha256_file, utc_now)
 
 STAGE = "approve"
+
+
+# Bằng chứng của bản đã phát hành: model, render, output và hai file .jsonl của translation.
+# KHÔNG khoá `review/`, `logs/`, `JOB_SUMMARY.md`, `input/job.yaml` — revoke phải ghi được vào
+# chúng. Cũng không khoá cả thư mục `qa/`: `report.json` thì khoá, còn `compare.pdf` và
+# `draft-raster.pdf` vẫn phải dựng lại được sau khi phát hành.
+FROZEN = ("model", "render", "output",
+          os.path.join("translation", "requests.jsonl"),
+          os.path.join("translation", "responses.jsonl"),
+          os.path.join("qa", "report.json"))
+
+
+def freeze_release(job: Job, on: bool) -> int:
+    """Khoá (hoặc mở) quyền ghi các artifact làm bằng chứng cho bản phát hành. → số mục đã đổi.
+
+    Vì sao cần: chốt trạng thái trong từng stage là hàng rào TỰ NGUYỆN — nó chỉ chặn thứ chịu
+    gọi nó. Helper viết tay trong job (`write_responses.py`) không gọi, và ngày 2026-08-07 nó
+    ghi đè `responses.jsonl` của một job đã phát hành. Lần ấy nội dung không đổi nên không mất
+    gì, nhưng đó là may.
+
+    Quyền ghi của filesystem thì không tự nguyện — cùng lý lẽ `lock-engine.sh` dùng cho engine.
+    Mở lại bằng `approve.py --decision revoke`; muốn thoát tay thì `chmod -R u+w <job>`.
+    """
+    off, n = ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH), 0
+    for rel in FROZEN:
+        path = job.p(*rel.split(os.sep))
+        if not os.path.exists(path):
+            continue
+        targets = [path]
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                targets.append(root)
+                targets += [os.path.join(root, f) for f in files]
+        for t in dict.fromkeys(targets):
+            cur = os.stat(t).st_mode
+            new = (cur & off) if on else (cur | stat.S_IWUSR)
+            if new != cur:
+                os.chmod(t, new)
+                n += 1
+    return n
 
 
 def stage_release_copy(draft: str, out: str) -> str:
@@ -114,6 +155,7 @@ def main() -> None:
                 # Thu hồi release đã phát hành (vd: approval giả mạo, lỗi phát hiện muộn).
                 if job.status() != "RELEASED":
                     raise BlockingError(f"revoke chỉ áp dụng cho job RELEASED (hiện: {job.status()})")
+                freeze_release(job, False)   # mở khoá trước khi đụng vào output
                 record()
                 job.set_status("REVOKED", f"reviewer {args.approver} revoke: {args.note or '(no note)'}")
                 out = job.p("output", "translated-approved.pdf")
@@ -162,7 +204,9 @@ def main() -> None:
             job.mark_stage(STAGE)
             job.write_summary(f"RELEASED — output: `output/translated-approved.pdf` "
                               f"(approver {args.approver}, {utc_now()})")
+            n = freeze_release(job, True)
             print(f"released → {out}")
+            print(f"đã khoá {n} mục artifact — mở lại bằng `--decision revoke`")
     except BlockingError as e:
         exit_blocking(job, STAGE, e)
 

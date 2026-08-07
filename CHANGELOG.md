@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.29] - 2026-08-07
+
+### Added
+
+- **`approve.py` makes the release evidence read-only.** On release it drops write
+  permission on `model/`, `render/`, `output/`, `translation/*.jsonl` and
+  `qa/report.json`; `--decision revoke` restores it. Not frozen: `review/`,
+  `logs/`, `JOB_SUMMARY.md`, `input/job.yaml` — revoke has to write those — and not
+  the whole of `qa/`, because `compare.pdf` and `draft-raster.pdf` must stay
+  rebuildable after release.
+
+  Why this is needed even after 1.9.28 gated `validate_responses`: a status check
+  inside a stage is a **voluntary** fence — it only stops whatever agrees to call
+  it. The hand-written job helper `write_responses.py` does not, and on 2026-08-07
+  it overwrote `responses.jsonl` of an already released job. Filesystem permissions
+  are not voluntary — the same argument `lock-engine.sh` makes for the engine
+  (§1.2). Manual escape hatch: `chmod -R u+w <job>`.
+
 ## [1.9.28] - 2026-08-07
 
 ### Fixed

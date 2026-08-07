@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.28"
+  version: "1.9.29"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.28 (engine `1.9.28`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.29 (engine `1.9.29`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -588,6 +588,16 @@ metadata:
 > kia chặn, stage này lọt (kèm `write_responses.py` — helper trong job, cố ý không có chốt).
 > Lần đó nội dung không đổi vì đầu vào y hệt và hàm idempotent — **đó là may, không phải hàng
 > rào**. Test mới đòi cả ba stage có chốt ở cổng vào, không chỉ có tên hằng số trong file.
+> **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
+> `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`
+> mở lại. Không khoá `review/`, `logs/`, `JOB_SUMMARY.md`, `input/job.yaml` (revoke phải ghi
+> được), cũng không khoá cả `qa/` — `compare.pdf` và `draft-raster.pdf` vẫn phải dựng lại được
+> sau khi phát hành.
+> Vì sao cần dù 1.9.28 đã siết `validate_responses`: chốt trạng thái trong stage là hàng rào
+> **tự nguyện**, chỉ chặn thứ chịu gọi nó. Helper viết tay trong job (`write_responses.py`)
+> không gọi, và 2026-08-07 nó ghi đè `responses.jsonl` của một job đã phát hành. Quyền ghi của
+> filesystem thì không tự nguyện — **cùng lý lẽ `lock-engine.sh` dùng cho engine** (§1.2).
+> Thoát tay khi cần: `chmod -R u+w <job>`.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)

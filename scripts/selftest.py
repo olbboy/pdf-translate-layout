@@ -1101,6 +1101,58 @@ _wide = {"lines": [_pl(29.8, 120.0, "Note"),
 check("thụt lề: thụt vô lý (vùng hai cột) thì bỏ, không ném chữ ra giữa trang",
       _fp.segment_indents(_wide, 29.8, 3) == [0.0] * 3,
       str(_fp.segment_indents(_wide, 29.8, 3)))
+# ── khoá quyền ghi artifact khi phát hành (1.9.29) ─────────────────────
+# Chốt trạng thái trong stage là hàng rào TỰ NGUYỆN — chỉ chặn thứ chịu gọi nó. Helper viết
+# tay trong job không gọi, và 2026-08-07 nó ghi đè `responses.jsonl` của job đã phát hành.
+# Quyền ghi filesystem thì không tự nguyện, cùng lý lẽ `lock-engine.sh` dùng cho engine.
+import tempfile  # noqa: E402
+
+import approve as _ap  # noqa: E402
+
+
+class _FakeJob:
+    def __init__(self, root):
+        self.root = root
+
+    def p(self, *parts):
+        return os.path.join(self.root, *parts)
+
+
+_tmp = tempfile.mkdtemp()
+_files = ["model/regions.json", "render/draft.pdf", "output/translated-approved.pdf",
+          "translation/responses.jsonl", "translation/requests.jsonl", "qa/report.json",
+          "qa/compare.pdf", "review/decisions.jsonl"]
+for _f in _files:
+    os.makedirs(os.path.dirname(os.path.join(_tmp, _f)), exist_ok=True)
+    open(os.path.join(_tmp, _f), "w").write("x")
+_job = _FakeJob(_tmp)
+
+
+def _writable(rel):
+    return os.access(os.path.join(_tmp, rel), os.W_OK)
+
+
+_n = _ap.freeze_release(_job, True)
+check("khoá phát hành: bằng chứng thành chỉ đọc",
+      not any(_writable(f) for f in
+              ("model/regions.json", "render/draft.pdf", "output/translated-approved.pdf",
+               "translation/responses.jsonl", "translation/requests.jsonl", "qa/report.json")),
+      str([f for f in _files if _writable(f)]))
+# Revoke phải ghi được vào `review/`; `compare.pdf` phải dựng lại được sau phát hành.
+check("khoá phát hành: review/ và qa/compare.pdf vẫn ghi được",
+      _writable("review/decisions.jsonl") and _writable("qa/compare.pdf"))
+check("khoá phát hành: có đổi thật, không phải no-op", _n > 0, str(_n))
+_ap.freeze_release(_job, False)
+check("khoá phát hành: revoke mở lại được hết",
+      all(_writable(f) for f in _files), str([f for f in _files if not _writable(f)]))
+import shutil as _sh  # noqa: E402
+_sh.rmtree(_tmp, ignore_errors=True)
+# Hàm đúng mà release không gọi thì vô dụng — và đó là lỗi im lặng.
+_apsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "approve.py"),
+              encoding="utf-8").read()
+check("khoá phát hành: release có gọi khoá, revoke có gọi mở",
+      "freeze_release(job, True)" in _apsrc and "freeze_release(job, False)" in _apsrc)
+
 # ── ô trống điền tay là nét LIỀN, gạch dẫn là nét đứt (1.9.27) ─────────
 # `fill_in_rules` nhận nhầm ba dòng mục lục V5 thành ô trống điền tay → `FILL_BLANK_DROPPED`
 # báo giả ở mọi tài liệu có mục lục. Nặng hơn: bản dịch có dãy `____` thì lượt xoá gạch-ô-trống
