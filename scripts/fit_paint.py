@@ -324,10 +324,14 @@ def segment_source_lines(reg: dict, n_seg: int) -> tuple[list[int], int] | None:
 HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")
 # Tựa được coi là "căn giữa theo trang" khi tâm chữ nguồn lệch tâm trang không quá ngần này.
 CENTERED_TOL_PT = 3.0
+# Nửa khe tối thiểu giữa hai region cạnh nhau cùng được nới. Mỗi bên lùi chừng này khỏi
+# điểm giữa, nên khoảng cách bảo đảm giữa hai cụm chữ là gấp đôi.
+SIBLING_GAP_PT = 1.0
 
 
 def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
-                     margins: tuple[float, float], align: str) -> tuple[list, str | None] | None:
+                     margins: tuple[float, float], align: str,
+                     share_gap: list = ()) -> tuple[list, str | None] | None:
     """→ (container nới rộng, alignment mới) cho region một dòng không đủ chỗ, hoặc None.
 
     Vì sao cần: khung của region lấy theo bbox chữ NGUỒN. Tiếng Việt dài hơn tiếng Anh, nên
@@ -344,6 +348,11 @@ def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
 
     Chỉ nới đúng bề rộng cần: nới hết khoảng trống sẽ đẩy chữ căn trái về sát mép trái, lệch
     khỏi bố cục gốc.
+
+    `share_gap`: bbox của những region CŨNG có thể tự nới (chữ dịch của cùng trang, so khớp
+    theo identity). Vật cản trong danh sách này chỉ chặn tới GIỮA khe chứ không tới mép của
+    nó — xem `SIBLING_GAP_PT`. Vật cản không nằm trong danh sách (hình, vector, nét kẻ) là
+    cố định nên chặn tới đúng mép.
     """
     b = reg["bbox"]
     y0, y1 = b[1], b[3]
@@ -351,10 +360,20 @@ def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
     for ob in obstacles:
         if ob[3] <= y0 or ob[1] >= y1:      # không giao dải dọc của heading
             continue
+        # Hàng xóm là chữ dịch thì CHÍNH NÓ cũng nới được về phía mình. Chặn tới mép bbox
+        # NGUỒN của nó là không đủ: cả hai đều thấy khe trống theo bbox nguồn, cả hai cùng
+        # lấn vào, cộng lại thành chồng chữ. Ca thật: dải nhãn hình dưới một hàng ảnh —
+        # nhãn trái nới phải tới 107.99 trong khi nhãn kế nới trái tới 106.39, đè 1.60pt,
+        # mà xét riêng từng region thì cả hai đều "tôn trọng vật cản".
+        # Mỗi bên chỉ được lấn tới giữa khe → hai bên cùng nới vẫn cách nhau
+        # 2*SIBLING_GAP_PT, và kết quả không phụ thuộc thứ tự paint.
+        movable = any(ob is s for s in share_gap)
         if ob[2] <= b[0]:
-            left_lim = max(left_lim, ob[2])
+            lim = (ob[2] + b[0]) / 2 + SIBLING_GAP_PT if movable else ob[2]
+            left_lim = max(left_lim, lim)
         elif ob[0] >= b[2]:
-            right_lim = min(right_lim, ob[0])
+            lim = (b[2] + ob[0]) / 2 - SIBLING_GAP_PT if movable else ob[0]
+            right_lim = min(right_lim, lim)
         else:
             return None                      # vật cản chồng lên chính chữ → không nới
     pad = 1.0
@@ -721,8 +740,10 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
                expand_ctx: dict | None = None) -> tuple[dict | None, list]:
     """→ (fit_result, issues). None nếu không có layout hợp lệ (fail-closed).
 
-    `expand_ctx` (optional): `{"obstacles": [...], "page_rect": [...], "margins": (l, r)}`
-    cho phép nới khung heading khi bản dịch không vừa — xem `expand_heading_container`.
+    `expand_ctx` (optional): `{"obstacles": [...], "page_rect": [...], "margins": (l, r),
+    "share_gap": [...]}` cho phép nới khung heading khi bản dịch không vừa — xem
+    `expand_container`. `share_gap` là bbox của các region chữ cùng trang, tức những vật cản
+    tự chúng cũng nới được.
     """
     issues = []
     tokens = tokenize(reg)
@@ -886,7 +907,8 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
                   + sum(pack.font(k).text_length(" ", fontsize=src_size)
                         for k in tok_font[:-1]))
         got = expand_container(reg, need_w, expand_ctx["obstacles"],
-                               expand_ctx["page_rect"], expand_ctx["margins"], align)
+                               expand_ctx["page_rect"], expand_ctx["margins"], align,
+                               expand_ctx.get("share_gap", ()))
         if got:
             new_c, new_align = got
             keep = (c, cw, wrap_w, avail_h, align, best, s_fit)
@@ -1165,11 +1187,14 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         if expand_on:
             # Vật cản = chữ của mọi region khác trên trang + vector + ảnh. Đọc từ trang
             # NGUỒN nên độc lập với thứ tự paint.
-            obstacles = [r["bbox"] for r in regions if r["page"] == pno]
+            text_boxes = [r["bbox"] for r in regions if r["page"] == pno]
+            obstacles = list(text_boxes)
             obstacles += [list(d["rect"]) for d in page.get_drawings()]
             obstacles += [list(page.get_image_bbox(i)) for i in page.get_images(full=True)]
+            # `share_gap` giữ ĐÚNG các object bbox trong `text_boxes` — `expand_container`
+            # so khớp bằng identity, nên copy giá trị sẽ vô hiệu hoá luật chia đôi khe.
             expand_ctx = {"obstacles": obstacles, "page_rect": list(page.rect),
-                          "margins": doc_margins}
+                          "margins": doc_margins, "share_gap": text_boxes}
 
         fitted: list[tuple[dict, dict]] = []
         # Ô bảng gộp nhiều cột được tách thành sub-region trước khi fit, mỗi cột giữ đúng

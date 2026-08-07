@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.30] - 2026-08-07
+
+### Fixed
+
+- **Two neighbouring labels could each expand into the same gap and end up
+  overlapping.** `expand_container` read its obstacles from the **source** page, which
+  keeps the result independent of paint order but misses that a neighbour made of
+  translated text expands too. Each region individually respected the neighbour's source
+  bbox; together they overlapped. Real case from a production job: a row of figure captions
+  under a strip of images. The left caption expanded right to x=107.99 while its neighbour
+  expanded left to x=106.39 — the glyphs overlapped by **1.60 pt**. Gate 4 did not catch it:
+  it measures container overflow, not collision with a neighbouring region.
+
+  Fix: obstacles that are themselves translated text on the same page (`share_gap`, matched
+  by identity) now block at the **midpoint of the gap**, minus `SIBLING_GAP_PT` (1.0 pt) on
+  each side. Two neighbours expanding toward each other therefore stop 2.0 pt apart, and the
+  outcome still does not depend on paint order. Fixed obstacles — images, vectors, rules —
+  keep blocking at their own edge, since expanding to the midpoint of a picture means
+  painting over it.
+
+  Measured on the two affected jobs, before → after: 1 → 0 overlapping runs on the job that
+  showed the defect, 0 → 0 on the other (its 2 flagged runs are vertical text, a measurement
+  artefact of the horizontal scan, present identically before the change).
+
 ## [1.9.29] - 2026-08-07
 
 ### Added

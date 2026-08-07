@@ -823,6 +823,42 @@ check("chắn cả hai bên thì không nới",
       _fp.expand_container(_lbl, 53.2, _blk + [[40.0, 316.0, 80.0, 330.0]],
                            _PAGE, _MARGINS, "left") is None)
 
+# ── hai nhãn cạnh nhau cùng nới thì phải chia đôi khe, không được đè (1.9.30) ──
+# Ca thật: dải nhãn hình dưới một hàng ảnh. Xét RIÊNG từng nhãn thì cả
+# hai đều "tôn trọng vật cản" theo bbox NGUỒN của hàng xóm — nhưng hàng xóm cũng nới, nên
+# cộng lại thành đè 1.60pt. Nhãn giữa bị kẹp cả hai bên nên nó nới sang TRÁI, đúng hướng
+# đã gây lỗi.
+_CAP_MARGINS = (27.8, 330.3)
+_capA = _heading((36.3, 167.9, 90.4, 177.4), (36.3, 167.9, 90.4, 177.4),
+                 rtype="figure_caption", src="Caption One")
+_capB = _heading((112.4, 168.0, 145.1, 177.4), (112.4, 168.0, 145.1, 177.4),
+                 rtype="figure_caption", src="Caption Two")
+_capC = _heading((158.0, 168.0, 196.9, 177.4), (158.0, 168.0, 196.9, 177.4),
+                 rtype="figure_caption", src="Caption Three")
+_caps = [_capA["bbox"], _capB["bbox"], _capC["bbox"]]
+
+_gA = _fp.expand_container(_capA, 71.7, [_capB["bbox"], _capC["bbox"]],
+                           _PAGE, _CAP_MARGINS, "left", _caps)
+_gB = _fp.expand_container(_capB, 50.0, [_capA["bbox"], _capC["bbox"]],
+                           _PAGE, _CAP_MARGINS, "left", _caps)
+# Không nới được thì vùng vẽ vẫn là bbox nguồn — so mép thực tế, không so riêng kết quả nới.
+_edgeA = _gA[0][2] if _gA else _capA["bbox"][2]
+_edgeB = _gB[0][0] if _gB else _capB["bbox"][0]
+check("hai nhãn cạnh nhau cùng nới thì không đè lên nhau",
+      _edgeB - _edgeA >= 2 * _fp.SIBLING_GAP_PT - 0.01,
+      f"mép phải A={_edgeA:.2f} mép trái B={_edgeB:.2f} khe={_edgeB - _edgeA:.2f}pt")
+_mid = (90.4 + 112.4) / 2
+check("không nhãn nào lấn quá giữa khe",
+      _edgeA <= _mid + 0.01 and _edgeB >= _mid - 0.01,
+      f"giữa khe={_mid:.2f} A={_edgeA:.2f} B={_edgeB:.2f}")
+
+# Vật cản KHÔNG tự nới được (hình, vector, nét kẻ) vẫn phải chặn tới đúng mép của nó —
+# chia đôi khe với một tấm ảnh nghĩa là vẽ đè lên ảnh.
+_gFixed = _fp.expand_container(_capB, 50.0, [_capA["bbox"], _capC["bbox"]],
+                               _PAGE, _CAP_MARGINS, "left")
+check("vật cản cố định vẫn chặn tới mép",
+      _gFixed is None or _gFixed[0][0] >= 90.4 - 0.01, str(_gFixed))
+
 # ── nhận khung nới khi nó bớt DÒNG chứ không chỉ khi tăng cỡ chữ (1.9.14) ──
 # Ca thật V5 p17: `7.1 Unable to start` → `7.1 Không khởi động được` cần 157.0pt trong khung
 # 132.0pt. Bản dự phòng hai dòng đã ở cỡ đầy nên cỡ chữ không thể lên nữa; điều kiện cũ

@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.29"
+  version: "1.9.30"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.29 (engine `1.9.29`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.30 (engine `1.9.30`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -588,6 +588,15 @@ metadata:
 > kia chặn, stage này lọt (kèm `write_responses.py` — helper trong job, cố ý không có chốt).
 > Lần đó nội dung không đổi vì đầu vào y hệt và hàm idempotent — **đó là may, không phải hàng
 > rào**. Test mới đòi cả ba stage có chốt ở cổng vào, không chỉ có tên hằng số trong file.
+> **1.9.30** vá **chồng chữ giữa hai nhãn cạnh nhau cùng được nới khung.**
+> `expand_container` đọc vật cản từ trang NGUỒN — giữ được tính độc lập với thứ tự paint,
+> nhưng bỏ sót việc hàng xóm cũng là chữ dịch và cũng nới. Xét riêng thì mỗi region đều tôn
+> trọng bbox nguồn của hàng xóm; cộng lại thì đè nhau. Ca thật trong một job đã chạy: hai
+> nhãn hình cạnh nhau đè 1.60pt, Gate 4 không bắt vì nó đo tràn khung chứ không đo va chạm
+> cạnh. Nay vật cản là chữ dịch cùng trang (`share_gap`, khớp theo identity) chỉ chặn tới
+> GIỮA khe, lùi thêm `SIBLING_GAP_PT` = 1.0pt mỗi bên. Vật cản cố định (ảnh, vector, nét kẻ)
+> vẫn chặn tới đúng mép.
+
 > **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
 > `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`
 > mở lại. Không khoá `review/`, `logs/`, `JOB_SUMMARY.md`, `input/job.yaml` (revoke phải ghi
