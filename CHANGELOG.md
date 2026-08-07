@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.23] - 2026-08-07
+
+### Fixed
+
+- **Gate 6 renders from clean document handles.** `page.get_image_info(hashes=True)`,
+  which Gate 5 calls, makes MuPDF decode every image up front and cache it; a
+  later render reuses that cached decode instead of decoding at the render
+  resolution, so pixels differ on fine detail. Gate 5 only inspects `draft`, so
+  Gate 6 was comparing two renders taken under different conditions — and every
+  flag that came out of it was a false positive. The experiment: same file, render
+  md5 `ec417e0f`, then `get_image_info(hashes=True)`, then `db59d990`; calling
+  `get_pixmap(clip=…)` first changes nothing. On V5 Series: **26 → 1
+  `G6_DIFF_OUTSIDE_MASK`**, i.e. 25 of 26 were noise, all on pages carrying images
+  (5, 7, 8, 9, 14).
+
+- The one surviving flag was real, and is fixed too: the band 1.9.18 declares to
+  Gate 6 covered only the **new** leader box, but when the translated title runs
+  longer the new leader starts further right than the old one, and the strip
+  between them loses its dots — still a pixel change. The declaration is now the
+  **union** of the old and new boxes. V5 `g6_visual` goes from red to green.
+
 ## [1.9.22] - 2026-08-07
 
 ### Fixed

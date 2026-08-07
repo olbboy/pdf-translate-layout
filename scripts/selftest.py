@@ -935,6 +935,20 @@ check("gạch dẫn chấm: dòng kết thúc đúng mép phải dòng nguồn",
 check("gạch dẫn chấm: fit_result khai số chấm đã phát lại",
       _frd is not None and _frd.get("dot_leader", 0) > _fp.DOT_LEADER_MIN,
       str(_frd and _frd.get("dot_leader")))
+# ── Gate 6 render từ handle sạch (1.9.23) ──────────────────────────────
+# `page.get_image_info(hashes=True)` mà Gate 5 gọi buộc MuPDF giải mã sẵn mọi ảnh vào cache;
+# lần render sau dùng bản cache đó nên pixel lệch ở chi tiết mảnh. Gate 5 chỉ soi `draft`,
+# nên Gate 6 đem hai bản render KHÔNG cùng điều kiện ra so — 26/26 cờ trên V5 là báo giả.
+_qgsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "qa_gates.py"),
+              encoding="utf-8").read()
+check("Gate 6: render bằng handle riêng, không dùng lại handle đã soi ảnh",
+      "src_r[pno].get_pixmap" in _qgsrc and "draft_r[pno].get_pixmap" in _qgsrc
+      and "sp = src[pno].get_pixmap" not in _qgsrc)
+# Nét gạch dẫn cũ rộng hơn nét mới khi tiêu đề dịch DÀI hơn: đoạn giữa mất chấm vẫn là pixel
+# đổi, nên dải khai cho Gate 6 phải là HỢP hai khung.
+check("gạch dẫn: dải khai cho Gate 6 là hợp khung cũ và mới",
+      'min(d["old"][0], d["new"][0])' in _fpsrc and 'max(d["old"][2], d["new"][2])' in _fpsrc)
+
 check("gạch dẫn chấm: Gate 3 chỉ chuẩn hoá vùng đã khai",
       'want, got = DOTS_RE.sub("....", want), DOTS_RE.sub("....", got)' in open(
           os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "qa_gates.py"),

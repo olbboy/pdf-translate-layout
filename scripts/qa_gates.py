@@ -436,9 +436,18 @@ def run_gates(job: Job) -> None:
     tile = qa_cfg["diff_tile_px"]
     halo = qa_cfg["mask_halo_pt"] * scale
     g6_fail = 0
+    # Render từ HANDLE SẠCH, không dùng lại `src`/`draft` của các gate trên.
+    # `page.get_image_info(hashes=True)` mà Gate 5 gọi buộc MuPDF giải mã sẵn mọi ảnh và
+    # nhét vào cache; lần render sau dùng bản cache đó thay vì giải mã lại ở đúng độ phân
+    # giải, nên pixel lệch ở chi tiết mảnh. Gate 5 chỉ soi `draft`, nên chỉ draft bị còn
+    # source thì không — và Gate 6 đem hai bản render không cùng điều kiện ra so.
+    # Đo trên V5 Series: **26/26 cờ `G6_DIFF_OUTSIDE_MASK` là báo giả**, đều ở trang có ảnh
+    # (5, 7, 8, 9, 14); render sạch cả hai vế thì còn 0.
+    src_r = pymupdf.open(job.source_pdf)
+    draft_r = pymupdf.open(job.p("render", "draft.pdf"))
     for pno in range(draft.page_count):
-        sp = src[pno].get_pixmap(dpi=dpi, alpha=False)
-        dp = draft[pno].get_pixmap(dpi=dpi, alpha=False)
+        sp = src_r[pno].get_pixmap(dpi=dpi, alpha=False)
+        dp = draft_r[pno].get_pixmap(dpi=dpi, alpha=False)
         if pno not in painted_pages:
             # md5 fast-path; nếu lệch, chỉ flag khi vượt ngưỡng "meaningful"
             # (render noise delta≤1 do cache state không phải corruption)
@@ -490,7 +499,7 @@ def run_gates(job: Job) -> None:
         min_size = min((s["size"] for r in model["regions"] if r["page"] == pno
                         for l in r["lines"] for s in l["spans"]), default=99)
         if min_size < qa_cfg["small_text_pt"] or clusters:
-            draft[pno].get_pixmap(dpi=qa_cfg["flagged_render_dpi"], alpha=False).save(
+            draft_r[pno].get_pixmap(dpi=qa_cfg["flagged_render_dpi"], alpha=False).save(
                 job.p("qa", "page_png", f"draft600_p{pno:02d}.png"))
     gates["g6_visual"] = {"pass": g6_fail == 0, "dpi": dpi}
 

@@ -1266,7 +1266,10 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                           "new": [round(x0, 2), round(run["y"] - 0.6, 2),
                                   round(run["x1"], 2), round(run["y"] + 0.6, 2)]})
         manifest["toc_leaders"] += drawn
-        leader_bands = [d["new"] for d in drawn]
+        # Dải khai cho Gate 6 phải là HỢP của khung cũ và mới: tiêu đề dịch dài hơn thì
+        # nét mới bắt đầu phải hơn nét cũ, và đoạn ở giữa mất chấm — vẫn là pixel đổi.
+        leader_bands = [[min(d["old"][0], d["new"][0]), d["new"][1],
+                         max(d["old"][2], d["new"][2]), d["new"][3]] for d in drawn]
 
         # link preservation (spec §9.4)
         if cfg["render"]["preserve_links"]:

@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.22"
+  version: "1.9.23"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.22 (engine `1.9.22`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.23 (engine `1.9.23`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -515,6 +515,17 @@ metadata:
 > khai số chấm đã phát lại, gate thu dãy chấm về một dạng ở cả hai vế **đúng những region đã
 > khai** — chỗ khác không được nới. Thiếu khai báo thì gate bắn **47 P0**, và đó chính là cách
 > lỗi này bị bắt.
+> **1.9.23** Gate 6 render từ **handle sạch**. `page.get_image_info(hashes=True)` mà Gate 5
+> gọi buộc MuPDF giải mã sẵn mọi ảnh và nhét vào cache; lần render sau dùng bản cache đó thay
+> vì giải mã lại ở đúng độ phân giải, nên pixel lệch ở chi tiết mảnh. Gate 5 **chỉ soi
+> `draft`**, nên Gate 6 đem hai bản render không cùng điều kiện ra so — và mọi cờ sinh ra từ
+> đó là báo giả. Thí nghiệm: cùng một file, `md5` bản render `ec417e0f` → sau
+> `get_image_info(hashes=True)` thành `db59d990`; gọi `get_pixmap(clip=…)` trước thì không
+> đổi. Đo trên V5 Series: **26 → 1 cờ `G6_DIFF_OUTSIDE_MASK`**, tức 25/26 là báo giả, đều ở
+> trang có ảnh (5, 7, 8, 9, 14).
+> Cờ cuối cùng là thật và cũng đã sửa: dải khai cho Gate 6 ở 1.9.18 chỉ có khung gạch dẫn
+> MỚI, trong khi tiêu đề dịch dài hơn thì nét mới bắt đầu phải hơn nét cũ — đoạn ở giữa mất
+> chấm vẫn là pixel đổi. Nay khai **hợp** hai khung. V5 `g6_visual` **đỏ → xanh**.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
