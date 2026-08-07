@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.35"
+  version: "1.9.36"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.35 (engine `1.9.35`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.36 (engine `1.9.36`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,27 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.36** **role suy biến** — role mà bản dịch trỏ vào không mang ký tự chữ-số NÀO trong
+> nguồn. Ca thật: ghi chú "Note：..." của V16 Lite có role `body` đúng **một dấu `：` font
+> Song**, còn `Note` lẫn cả câu sau đều là `emphasis` `Arial-BoldMT`; bản dịch ra một run
+> `body` nên `role_face` chọn đúng luật 1.9.35 mà vẫn ra Noto Serif cho cả câu. 3 vùng, 261
+> ký tự, trên hai tài liệu V16 Lite đã phát hành.
+> Nay khi role suy biến thì mượn từ vùng — nhưng **họ chữ và độ đậm mượn từ hai phép đo khác
+> nhau**, vì là hai thuộc tính khác nhau:
+> **Họ chữ** (`serif`/`mono`) lấy từ run nhiều mực nhất trong số run CÓ CHỮ-SỐ — dấu câu
+> không mang danh tính họ chữ; ô `（A）` của V5 Series chỉ có mỗi `A` là sans, hai dấu ngoặc
+> toàn rộng là Song, họ chữ đúng của nó là sans.
+> **Độ đậm/nghiêng** lấy từ run nhiều mực nhất trong số MỌI run, không lọc dấu câu — độ đậm
+> là thuộc tính của khối mực. Hai ca thật đối nghịch nhau chốt luật này: **dòng mục lục** V16
+> Lite là tiêu đề chương ĐẬM 21 ký tự + dãy chấm THƯỜNG 38 ký tự (đo theo run có chữ-số thì
+> đậm nguyên dòng — hỏng 38 ký tự để sửa 21); **ghi chú** là 4 ký tự đậm + `：` thường + 98 ký
+> tự đậm (đo theo mọi run thì đậm thắng). Cả hai đều khớp bản gốc.
+> Đo: 19 vùng có role suy biến trên toàn kho. Chạy lại — V16 Lite quick guide **1,281% →
+> 0,000%**, user manual **0,295% → 0,000%**, V5 Series manual **0,021% → 0,000%**; 7 dòng mục
+> lục vẫn `Noto Sans Regular` đúng như trước, câu ghi chú vừa sửa nay `Noto Sans Bold` khớp
+> bốn câu anh em cùng trang.
+> **Chỉ đụng stage 6** — job cũ chạy lại stage 6 → 7 là hưởng.
 
 > **1.9.35** **kiểu chữ** của role lấy theo run mang NHIỀU NÉT MỰC NHẤT (`role_face`), còn
 > **màu** vẫn theo run đầu có mực (`role_style`). 1.9.34 tước quyền quyết định của run rỗng,

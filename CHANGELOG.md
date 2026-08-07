@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.36] - 2026-08-07
+
+### Fixed
+
+- **Degenerate roles** — a role the translation points at that carries no alphanumeric
+  character at all in the source. Real case: the "Note：..." callouts in V16 Lite have a
+  `body` role consisting of **a single `：` in Song**, while `Note` and the whole sentence
+  after it are `emphasis` `Arial-BoldMT`. The translation emits one `body` run, so
+  `role_face` obeyed the 1.9.35 rule correctly and still rendered the whole sentence in Noto
+  Serif. 3 regions, 261 characters, across two already-released V16 Lite documents.
+
+  A degenerate role now borrows from the region — but **family and weight are borrowed from
+  two different measurements**, because they are two different properties:
+
+  - **Family** (`serif`/`mono`) comes from the longest run *that has alphanumerics*.
+    Punctuation carries no family identity: the `（A）` cell in the V5 Series manual has `A`
+    in sans and both fullwidth parentheses in Song, and sans is the right answer.
+  - **Weight/italic** comes from the longest run among *all* runs, punctuation included,
+    because weight is a property of the ink mass. Two opposing real cases pin this down: a
+    **table-of-contents line** is a BOLD 21-character chapter title plus 38 REGULAR leader
+    dots (measuring on alphanumeric runs alone would bold the whole line — breaking 38
+    characters to fix 21); a **callout** is 4 bold characters, a regular `：`, then 98 bold
+    characters (measuring on all runs makes bold win). Both match the source.
+
+  Measured: 19 regions have a degenerate role corpus-wide. After re-running — V16 Lite quick
+  guide **1.281% -> 0.000%**, user manual **0.295% -> 0.000%**, V5 Series manual **0.021% ->
+  0.000%**; the 7 TOC lines stay `Noto Sans Regular` exactly as before, and the repaired
+  callout is now `Noto Sans Bold`, matching its four siblings on the same page.
+
+  **Stage 6 only** — released jobs re-run stages 6 -> 7 to benefit.
+
 ## [1.9.35] - 2026-08-07
 
 ### Fixed

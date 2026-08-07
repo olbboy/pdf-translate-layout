@@ -1753,6 +1753,66 @@ check("không có run nào có mực thì lùi về role_style",
       _rf(_all_ws, "body")["font"] == "AdobeSongStd-Light")
 
 
+# ── role suy biến: role của bản dịch chỉ có dấu câu (engine 1.9.36) ───────────────────
+# Ca thật: ghi chú "Note：..." của V16 Lite — role `body` đúng một dấu `：` font Song, còn
+# `Note` lẫn cả câu sau đều là `emphasis` Arial-BoldMT. Bản dịch một run `body` nên cả câu
+# vẽ bằng Noto Serif.
+_degen = {"runs": [
+    {"text": "Note", "role": "emphasis", "serif": False, "bold": True, "mono": False,
+     "font": "Arial-BoldMT"},
+    {"text": "：", "role": "body", "serif": True, "bold": False, "mono": False,
+     "font": "AdobeSongStd-Light"},
+    {"text": "If V16 Lite battery is parallel connected" * 2, "role": "emphasis",
+     "serif": False, "bold": True, "mono": False, "font": "Arial-BoldMT"}]}
+check("role chỉ có dấu câu thì mượn HỌ CHỮ của run có chữ nhiều mực nhất",
+      _rf(_degen, "body")["serif"] is False)
+# 4 ký tự đậm + 1 dấu `：` thường + 98 ký tự đậm → khối mực là đậm, khớp bốn ghi chú anh em
+# cùng trang mà nguồn cũng đậm.
+check("... và mượn ĐỘ ĐẬM theo khối mực lớn nhất", _rf(_degen, "body")["bold"] is True)
+
+# Ca đối nghịch: dòng mục lục V16 Lite là tiêu đề chương ĐẬM 21 ký tự + dãy chấm THƯỜNG 38.
+# Đo độ đậm theo run CÓ CHỮ thì đậm nguyên dòng — hỏng 38 ký tự chấm để sửa 21 ký tự tiêu đề.
+_toc = {"runs": [
+    {"text": "1  Safety Precautions", "role": "emphasis", "serif": False, "bold": True,
+     "mono": False, "font": "Arial-BoldMT"},
+    {"text": "." * 38, "role": "body", "serif": False, "bold": False, "mono": False,
+     "font": "ArialMT"}]}
+check("dãy chấm mục lục dài hơn tiêu đề nên dòng vẫn KHÔNG đậm",
+      _rf(_toc, "body")["bold"] is False)
+check("... và họ chữ vẫn giữ sans như cũ", _rf(_toc, "body")["serif"] is False)
+
+# Ca chốt HỌ CHỮ phải đo trên run CÓ CHỮ-SỐ: ô `（A）` của V5 Series manual là hai dấu ngoặc
+# toàn rộng Song bọc một chữ `A` sans. Đo trên mọi run thì dấu ngoặc thắng và ô ra serif;
+# đo trên run có chữ-số thì `A` thắng và ra sans — chữ duy nhất trong ô là sans.
+_paren = {"runs": [
+    {"text": "（", "role": "body", "serif": True, "bold": False, "mono": False,
+     "font": "AdobeSongStd-Light"},
+    {"text": "A", "role": "emphasis", "serif": False, "bold": True, "mono": False,
+     "font": "Arial-BoldMT"},
+    {"text": "）", "role": "body", "serif": True, "bold": False, "mono": False,
+     "font": "AdobeSongStd-Light"}]}
+check("họ chữ đo trên run CÓ CHỮ, không trên dấu ngoặc Song dài bằng",
+      _rf(_paren, "body")["serif"] is False)
+
+# Role có chữ thật thì không mượn gì — luật 1.9.35 giữ nguyên.
+_normal = {"runs": [
+    {"text": "：", "role": "body", "serif": True, "bold": False, "mono": False,
+     "font": "AdobeSongStd-Light"},
+    {"text": "x" * 210, "role": "body", "serif": False, "bold": False, "mono": False,
+     "font": "ArialMT"}]}
+check("role đã có chữ thật thì không mượn từ role khác",
+      _rf(_normal, "body")["font"] == "ArialMT")
+
+# CJK tính là có chữ — `宋体` không được coi là dấu câu rồi đi mượn họ chữ chỗ khác.
+_cjk = {"runs": [
+    {"text": "宋体说明", "role": "body", "serif": True, "bold": False, "mono": False,
+     "font": "AdobeSongStd-Light"},
+    {"text": "x" * 99, "role": "emphasis", "serif": False, "bold": True, "mono": False,
+     "font": "Arial-BoldMT"}]}
+check("chữ CJK tính là có chữ, không mượn họ chữ chỗ khác",
+      _rf(_cjk, "body")["serif"] is True)
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

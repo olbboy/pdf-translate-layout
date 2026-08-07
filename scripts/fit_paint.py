@@ -135,6 +135,13 @@ def wrap_lines(widths: list[float], space_w, max_w: float) -> list[list[int]] | 
     return lines
 
 
+def has_alnum(text: str) -> bool:
+    """Run có mang chữ hay số không. `isalnum` đúng cho cả CJK, nên `宋体` tính là có chữ;
+    còn `：`, `（）`, dãy chấm dẫn của mục lục thì không — đó là thứ không mang danh tính
+    kiểu chữ để truyền cho bản dịch."""
+    return any(c.isalnum() for c in text)
+
+
 def role_style(reg: dict, role: str) -> dict:
     """Style của role, lấy từ run ĐẦU TIÊN CÓ NÉT MỰC — không phải run đầu tiên khớp role.
 
@@ -174,11 +181,40 @@ def role_face(reg: dict, role: str) -> dict:
     và ở bảng thông số datasheet nhãn là đen còn giá trị là xám — đo được 7 vùng mà run đa
     số đổi màu nhãn từ `#000101` sang `#585857`. Kiểu chữ thì lấy theo đa số là đúng, màu
     thì không; nên tách hai câu hỏi thành hai hàm thay vì nới một hàm cho cả hai.
+
+    1.9.36 — **role suy biến**: có vùng mà role của bản dịch không mang ký tự chữ-số NÀO
+    trong nguồn, toàn bộ chữ thật nằm ở role khác. Ca thật: ghi chú "Note：..." của V16 Lite
+    có role `body` đúng một dấu `：` font Song, còn `Note` lẫn cả câu sau đều là `emphasis`
+    `Arial-BoldMT`; bản dịch ra một run `body` nên cả câu vẽ bằng Noto Serif. Dấu câu không
+    mang danh tính kiểu chữ, nên khi role rỗng nghĩa như vậy thì mượn HỌ CHỮ (`serif`/`mono`)
+    của run nhiều mực nhất trong CẢ VÙNG.
+
+    Họ chữ và độ đậm mượn từ HAI phép đo khác nhau, vì chúng là hai thuộc tính khác nhau:
+
+    - **Họ chữ** lấy từ run nhiều mực nhất trong số run CÓ CHỮ-SỐ. Dấu câu không mang danh
+      tính họ chữ; ô `（A）` của V5 Series chỉ có mỗi chữ `A` là sans, hai dấu ngoặc toàn rộng
+      là Song, và họ chữ đúng của nó là sans.
+    - **Độ đậm/nghiêng** lấy từ run nhiều mực nhất trong số MỌI run, không lọc dấu câu, vì
+      độ đậm là thuộc tính của khối mực chứ không của chữ. Ca thật đối nghịch: dòng mục lục
+      V16 Lite là tiêu đề chương ĐẬM 21 ký tự + dãy chấm THƯỜNG 38 ký tự, lấy theo run có
+      chữ-số thì đậm nguyên dòng — hỏng 38 ký tự chấm để sửa 21 ký tự tiêu đề; lấy theo mọi
+      run thì dãy chấm thắng và dòng vẫn thường, đúng như bản gốc. Ngược lại ghi chú
+      "Note：..." là 4 ký tự đậm + 1 dấu `：` thường + 98 ký tự đậm, mọi run thì đậm thắng —
+      cũng đúng như bản gốc, và khớp bốn câu ghi chú anh em cùng trang.
     """
     inked = [r for r in reg["runs"] if r["role"] == role and r["text"].strip()]
     if not inked:
         return role_style(reg, role)
-    return max(inked, key=lambda r: len(r["text"].strip()))
+    pick = max(inked, key=lambda r: len(r["text"].strip()))
+    if not any(has_alnum(r["text"]) for r in inked):
+        by_ink = [r for r in reg["runs"] if r["text"].strip()]
+        alnum = [r for r in by_ink if has_alnum(r["text"])]
+        longest = lambda pool: max(pool, key=lambda r: len(r["text"].strip()))
+        face = longest(alnum) if alnum else pick
+        mass = longest(by_ink) if by_ink else pick
+        pick = {**pick, "serif": face["serif"], "mono": face.get("mono", False),
+                "bold": mass["bold"], "italic": mass.get("italic", False)}
+    return pick
 
 
 def ink_base_x(reg: dict, span_x: float) -> float:
