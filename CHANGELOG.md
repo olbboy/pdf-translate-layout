@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.9] - 2026-08-07
+
+### Fixed
+
+- **The `base_x` guard from 1.9.6 now takes the leftmost inked start across lines**
+  instead of demanding that every line share one. It still never paints left of
+  any line's source ink, so prose with a first-line indent stays safe — the
+  leftmost start is the body margin. The old guard missed **merged cells centred
+  by space runs of differing length per line**: a spec-table dimension cell whose
+  ink began 64.5pt right of the span origin was skipped, and the translation
+  spilled into the label column. Measured across 5 jobs, the relaxation touches
+  **2 additional regions**.
+
 ## [1.9.8] - 2026-08-07
 
 ### Fixed

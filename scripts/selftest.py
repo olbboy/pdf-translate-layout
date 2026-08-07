@@ -885,8 +885,10 @@ check("base_x: chỉ nâng, không bao giờ hạ",
       _fp.ink_base_x(_reg_lines(40.0, span_x=45.7), 45.7) == 45.7)
 check("base_x: nhiều dòng cùng mép mực thì vẫn nâng",
       _fp.ink_base_x(_reg_lines(187.0, 187.0, span_x=138.0), 138.0) == 187.0)
-check("base_x: nhiều dòng lệch mép (thụt dòng đầu) thì guard chặn",
+check("base_x: nhiều dòng lệch mép thì lấy mép trái nhất, không lấy dòng đầu",
       _fp.ink_base_x(_reg_lines(60.0, 45.7, span_x=45.7), 45.7) == 45.7)
+check("base_x: mọi dòng đều thụt (ô gộp căn bằng space) thì nâng tới mép trái nhất",
+      _fp.ink_base_x(_reg_lines(92.2, 107.3, span_x=27.7), 27.7) == 92.2)
 check("base_x: region không có lines thì trả nguyên span_x",
       _fp.ink_base_x({"lines": []}, 45.7) == 45.7)
 

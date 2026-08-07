@@ -162,11 +162,11 @@ def ink_base_x(reg: dict, span_x: float) -> float:
     lines = reg.get("lines") or []
     if not lines:
         return span_x
-    if len(lines) > 1:
-        lefts = [l["bbox"][0] for l in lines]
-        if max(lefts) - min(lefts) >= 1.0:
-            return span_x
-    return max(span_x, lines[0]["bbox"][0])
+    # Lấy mép mực TRÁI NHẤT trong các dòng: không bao giờ vẽ trái hơn chữ nguồn của bất kỳ
+    # dòng nào, nên văn xuôi có thụt lề dòng đầu vẫn an toàn (mép trái nhất chính là lề thân
+    # bài). 1.9.6 đòi MỌI dòng cùng mép nên bỏ sót ô gộp được căn giữa bằng dãy space có số
+    # space khác nhau từng dòng — đo trên 5 job, nới thế này chỉ đụng thêm 2 vùng.
+    return max(span_x, min(l["bbox"][0] for l in lines))
 
 
 HEADING_NUM_RE = re.compile(r"^\s*\d+(\.\d+)*[.\s]\s*\S")

@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.8"
+  version: "1.9.9"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.8 (engine `1.9.8`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.9 (engine `1.9.9`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -356,6 +356,12 @@ metadata:
 > đúng** (hai ô nhãn bảng thông số, đoạn mục 7, hai ô của E-BOX datasheet). 0 region đổi
 > sang `center`/`right`.
 > Không đụng `region_id`, `container` hay bản dịch — job cũ chạy lại stage 2 → 7.
+> **1.9.9** guard của `base_x` (1.9.6) nới từ "MỌI dòng cùng mép mực" thành **mép mực
+> trái nhất trong các dòng**. Vẫn không bao giờ vẽ trái hơn chữ nguồn của bất kỳ dòng nào,
+> nên văn xuôi có thụt lề dòng đầu vẫn an toàn — mép trái nhất chính là lề thân bài. Guard
+> cũ bỏ sót **ô gộp được căn giữa bằng dãy space có số space khác nhau từng dòng**: ca thật
+> V5 Series p5, ô kích thước gộp ba cột, mực bắt đầu cách origin **64.5pt** mà guard chặn
+> nên chữ dịch tràn sang cột nhãn. Đo trên 5 job: nới thế này chỉ đụng thêm **2 vùng**.
 > **Spec nguồn:** PDF Translation Engine v1, rev 1.4 — `system_design_pdf_translation_engine_v1_final.md`,
 > giữ ở repo tài liệu nội bộ, **không bundle theo engine**. Spec chỉ cần cho dev; runtime không cần.
 > **License:** [AGPL-3.0](LICENSE) (cùng license với PyMuPDF — ADR-009); fonts Noto theo [OFL-1.1](assets/fonts/OFL.txt)
