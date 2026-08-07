@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.33"
+  version: "1.9.34"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.33 (engine `1.9.33`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.34 (engine `1.9.34`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,24 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.34** `role_style` lấy style của run **ĐẦU TIÊN CÓ NÉT MỰC** khớp role, không lấy
+> run đầu tiên khớp role. Bản gốc hay mở đầu đoạn bằng span khoảng trắng thuộc font khác:
+> ca thật ở HV48100 user manual trang 5 là run 0 = **một dấu cách** `AdobeSongStd-Light`
+> (serif) rồi run 1 = 175 ký tự `ArialMT` (sans), cả hai role `body`. Bản dịch một run
+> `body` nhận style của dấu cách nên **cả đoạn vẽ bằng Noto Serif**.
+> Cùng lớp lỗi "đệm space" mà `ink_base_x` đã sửa cho trục x từ 1.8.0/1.9.9, và cùng thứ
+> 1.9.7 đã phải chống riêng trong `build_runs` (`lead_in` đòi run sau có chữ thật) — 1.9.34
+> đặt guard ở chính `role_style` nên mọi đường vào đều được che, không chỉ nhánh `emphasis`.
+> Đo: vùng có >= 2 run cùng role, run đầu rỗng, khác `serif`/`bold` với run có mực đầu tiên —
+> **HV48100 user manual 13 vùng / 7.738 ký tự, V5 datasheet 1 vùng, V5 Series manual 1 vùng**.
+> Chạy lại HV48100 manual: ký tự Noto Serif **12,5% → 0,00%**; Noto Sans Bold giữ nguyên 4,5%,
+> mọi issue QA khác không đổi (P1=112, P2=127 trước và sau).
+> Mọi run cùng role đều rỗng thì giữ hành vi cũ; role không có trong `runs` vẫn lùi về
+> `runs[0]`. Khoảng trắng tính theo `str.strip()` nên nbsp và ideographic space cũng không
+> được quyết định style.
+> **Chỉ đụng stage 6** — không đổi `regions.json`, `region_id`, `source_hash` hay bản dịch;
+> job cũ chạy lại stage 6 → 7 là hưởng.
 
 > **1.9.29** `approve.py` **khoá quyền ghi** các artifact làm bằng chứng khi phát hành:
 > `model/`, `render/`, `output/`, `translation/*.jsonl`, `qa/report.json`. `--decision revoke`

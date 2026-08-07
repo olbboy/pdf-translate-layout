@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.34] - 2026-08-07
+
+### Fixed
+
+- **`role_style` now takes the style of the first run with *ink*, not the first run matching
+  the role.** Source PDFs routinely open a paragraph with a whitespace span in a different
+  font. The measured case, HV48100 user manual page 5: run 0 is **a single space** in
+  `AdobeSongStd-Light` (serif), run 1 is 175 characters of `ArialMT` (sans), both role
+  `body`. A one-run `body` translation inherited the space's style, so **the whole paragraph
+  was painted in Noto Serif** against a sans original.
+
+  Same defect class `ink_base_x` fixed on the x axis in 1.8.0/1.9.9, and the same thing 1.9.7
+  had to guard against locally in `build_runs` (its `lead_in` rule requires the following run
+  to carry real text). 1.9.34 puts the guard in `role_style` itself, so every caller is
+  covered rather than just the `emphasis` path.
+
+  Blast radius, counting regions with >= 2 runs of one role where the first is blank and
+  differs in `serif`/`bold` from the first inked run: **HV48100 user manual 13 regions /
+  7,738 translated characters, V5 datasheet 1 region, V5 Series manual 1 region**. Re-running
+  the HV48100 manual: Noto Serif characters **12.5% -> 0.00%**; Noto Sans Bold unchanged at
+  4.5%, and every other QA issue identical (P1=112, P2=127 before and after).
+
+  When every run of the role is blank the old behaviour is kept; a role absent from `runs`
+  still falls back to `runs[0]`. Blankness is `str.strip()`, so nbsp and ideographic space
+  do not get a vote either.
+
+  **Stage 6 only** — no change to `regions.json`, `region_id`, `source_hash` or translations.
+  Released jobs re-run stages 6 -> 7 to benefit; responses are never orphaned.
+
 ## [1.9.33] - 2026-08-07
 
 ### Fixed

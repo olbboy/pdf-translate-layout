@@ -1677,6 +1677,45 @@ check("style_of: giữ nguyên bold/italic/mono theo cờ",
       == {"bold": True, "italic": True, "serif": False, "mono": True})
 
 
+# ── role_style lấy run CÓ NÉT MỰC, không lấy run đầu khớp role (engine 1.9.34) ────────
+# Ca thật: HV48100 user manual trang 5 mở đầu bằng một dấu cách font Song (serif) rồi mới
+# tới 175 ký tự ArialMT (sans), cả hai role `body`. Lấy run đầu thì cả đoạn ra Noto Serif.
+from fit_paint import role_style as _rs
+
+_ws_first = {"runs": [
+    {"text": " ", "role": "body", "serif": True, "bold": False, "font": "AdobeSongStd-Light"},
+    {"text": "The equipment is damaged", "role": "body", "serif": False, "bold": False,
+     "font": "ArialMT"}]}
+check("run rỗng đứng trước không quyết định style của role",
+      _rs(_ws_first, "body")["font"] == "ArialMT")
+check("... và không kéo theo cờ serif của nó",
+      _rs(_ws_first, "body")["serif"] is False)
+
+# Không được sửa quá tay: run đầu CÓ mực thì vẫn là nó, dù sau nó có run khác cùng role.
+_ink_first = {"runs": [
+    {"text": "Cảnh báo", "role": "body", "serif": True, "bold": True, "font": "SimSun"},
+    {"text": " tiếp theo", "role": "body", "serif": False, "bold": False, "font": "ArialMT"}]}
+check("run đầu có mực vẫn thắng như cũ", _rs(_ink_first, "body")["font"] == "SimSun")
+
+# Mọi run cùng role đều rỗng → không có gì để so, giữ hành vi cũ chứ không nhảy sang role khác.
+_all_ws = {"runs": [
+    {"text": "  ", "role": "body", "serif": True, "bold": False, "font": "AdobeSongStd-Light"},
+    {"text": "Tiêu đề", "role": "heading", "serif": False, "bold": True, "font": "ArialMT"}]}
+check("mọi run cùng role đều rỗng thì vẫn lấy run đầu khớp role",
+      _rs(_all_ws, "body")["font"] == "AdobeSongStd-Light")
+
+# Role không tồn tại → lùi về runs[0], như cũ.
+check("role không có trong runs thì lùi về runs[0]",
+      _rs(_ink_first, "caption")["font"] == "SimSun")
+
+# Khoảng trắng không chỉ là U+0020: nbsp/ideographic space cũng không được quyết định style.
+_nbsp_first = {"runs": [
+    {"text": " 　", "role": "body", "serif": True, "bold": False, "font": "SimSun"},
+    {"text": "chữ thật", "role": "body", "serif": False, "bold": False, "font": "ArialMT"}]}
+check("nbsp và ideographic space cũng tính là không có mực",
+      _rs(_nbsp_first, "body")["font"] == "ArialMT")
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

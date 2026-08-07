@@ -136,10 +136,26 @@ def wrap_lines(widths: list[float], space_w, max_w: float) -> list[list[int]] | 
 
 
 def role_style(reg: dict, role: str) -> dict:
-    for r in reg["runs"]:
-        if r["role"] == role:
+    """Style của role, lấy từ run ĐẦU TIÊN CÓ NÉT MỰC — không phải run đầu tiên khớp role.
+
+    Bản gốc hay mở đầu một đoạn bằng span khoảng trắng thuộc font khác: ca thật đo được
+    trong HV48100 user manual là run 0 = một dấu cách `AdobeSongStd-Light` (serif) rồi
+    run 1 = 175 ký tự `ArialMT` (sans), cả hai role `body`. Lấy run đầu thì cả đoạn dịch
+    ra Noto Serif trong khi nguồn là sans — 13 vùng / 7.738 ký tự trên riêng tài liệu đó,
+    và một vùng nữa trên V5 datasheet đã phát hành.
+
+    Cùng lớp lỗi "đệm space" mà `ink_base_x` (ngay dưới) sửa cho trục x từ 1.8.0/1.9.9:
+    span khoảng trắng có advance nhưng không vẽ gì, nên nó không được quyền quyết định
+    thứ gì về hình thức của chữ thật.
+
+    Mọi run cùng role đều rỗng thì không có gì để so — giữ nguyên hành vi cũ, lấy run đầu
+    khớp role, rồi mới lùi về `runs[0]`.
+    """
+    same = [r for r in reg["runs"] if r["role"] == role]
+    for r in same:
+        if r["text"].strip():
             return r
-    return reg["runs"][0]
+    return same[0] if same else reg["runs"][0]
 
 
 def ink_base_x(reg: dict, span_x: float) -> float:
