@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.26] - 2026-08-07
+
+### Changed
+
+- **Bullet marks now follow the text, instead of the text having to follow the
+  marks.** 1.9.20 anchored each translated paragraph to its source paragraph's
+  baseline so the text would line up with the marks — correct while the marks stay
+  put, but when a translated item runs shorter than its source the slack turns
+  into **blank space between items**. The layout "skips lines", which no gate
+  measures and only a human reading the page can see.
+
+  The old marks are now erased in the line-art redaction pass (the same mechanism
+  as `fill_rules` and the contents leaders) and redrawn after the text is placed,
+  offset by the difference in baseline. The mark's path is **copied verbatim** from
+  the source with `dy` added — not rebuilt as a generated circle, because sources
+  use `•` `∘` `◇` `▪` and guessing the shape wrong is immediately visible.
+
+  A region whose marks can move has **baseline anchoring switched off**: the text
+  flows continuously and the marks come along. The three pieces — erase, redraw,
+  disable anchoring — only work together, so each has its own mutation test.
+
+  Gate 6 gets the union of each mark's old and new box, the same declaration the
+  leaders use. Gate 5 is unaffected: the vector cluster count is unchanged (one
+  erased, one drawn). On HV48100: **58 marks moved**; pages 8, 9, 11 and 19 lose
+  both the bullet overprints and the line skips.
+
 ## [1.9.25] - 2026-08-07
 
 ### Added

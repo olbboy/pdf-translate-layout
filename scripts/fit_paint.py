@@ -592,6 +592,65 @@ def dot_leader_token(reg: dict, tokens: list) -> int | None:
     return len(tokens) - 2
 
 
+MARK_MAX_PT = 8.0     # dấu gạch đầu dòng nhỏ hơn ngần này mỗi chiều
+MARK_BAND_PT = 30.0   # và nằm trong ngần này kể từ mép trái vùng
+MARK_LIFT_PT = 7.0    # tâm dấu nằm TRÊN baseline dòng nó đánh, không quá ngần này
+
+
+def bullet_marks(reg: dict, drawings: list) -> list[tuple[int, dict]]:
+    """[(chỉ số dòng nguồn, hình vẽ dấu)] — dấu gạch đầu dòng của vùng, ghép với dòng nó đánh.
+
+    Cùng chữ ký với `extract_group.bullet_lines`, nhưng ở đây cần chính HÌNH VẼ để còn dời
+    được nó. `reg["bullet_lines"]` (stage 2) là danh sách dòng đã chốt; hàm này chỉ tìm lại
+    hình vẽ tương ứng.
+    """
+    want = reg.get("bullet_lines") or []
+    if not want:
+        return []
+    b, ink = reg["bbox"], [l["bbox"] for l in reg["lines"]]
+    base = [l["spans"][0]["origin"][1] for l in reg["lines"]]
+    out = []
+    for d in drawings:
+        r = d["rect"]
+        if r.width > MARK_MAX_PT or r.height > MARK_MAX_PT:
+            continue
+        if not b[0] - 2 <= r.x0 <= b[0] + MARK_BAND_PT:
+            continue
+        cy = (r.y0 + r.y1) / 2
+        if not b[1] - 4 <= cy <= b[3] + 4:
+            continue
+        if any(i[0] - 1 <= r.x0 <= i[2] and i[1] <= cy <= i[3] for i in ink):
+            continue
+        cand = [i for i in want if 0 <= base[i] - cy <= MARK_LIFT_PT]
+        if cand:
+            out.append((min(cand, key=lambda i: base[i] - cy), d))
+    return out
+
+
+def redraw_mark(page, d: dict, dy: float) -> None:
+    """Vẽ lại một dấu gạch đầu dòng, dời xuống `dy`. Chép nguyên đường path của bản gốc.
+
+    Không dựng lại bằng hình tròn/thoi tự chế: nguồn dùng `•` `∘` `◇` `▪` khác nhau, đoán sai
+    hình là thấy ngay. Bốn đoạn bezier của bản gốc chép nguyên, chỉ cộng `dy`.
+    """
+    off = pymupdf.Point(0, dy)
+    sh = page.new_shape()
+    for it in d["items"]:
+        op = it[0]
+        if op == "l":
+            sh.draw_line(it[1] + off, it[2] + off)
+        elif op == "c":
+            sh.draw_bezier(it[1] + off, it[2] + off, it[3] + off, it[4] + off)
+        elif op == "re":
+            sh.draw_rect(it[1] + pymupdf.Rect(0, dy, 0, dy))
+        elif op == "qu":
+            sh.draw_quad(it[1] + pymupdf.Quad(*[p + off for p in it[1]])
+                         if False else pymupdf.Quad(*[p + off for p in it[1]]))
+    sh.finish(color=d.get("color"), fill=d.get("fill"), width=d.get("width") or 0,
+              closePath=d.get("closePath", True))
+    sh.commit()
+
+
 LEADER_MAX_H = 1.2        # nét gạch dẫn mỏng hơn ngần này mới coi là gạch dẫn
 LEADER_MAX_GAP = 12.0     # và phải bắt đầu trong ngần này sau mép chữ nguồn
 LEADER_MIN_LEN = 8.0      # đoạn gạch còn lại ngắn hơn ngần này thì thôi, đừng vẽ
@@ -738,8 +797,10 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     n_seg = 1 + sum(1 for t in tokens[1:] if t.get("br"))
     seg_ind = (segment_indents(reg, base_x, n_seg)
                if reg["rotation"] == 0 and reg["alignment"] == "left" else [0.0] * n_seg)
+    # Neo baseline giữ chữ khớp dấu khi dấu ĐỨNG YÊN. Vùng nào dời được dấu thì thôi neo —
+    # neo mà đoạn dịch ngắn hơn nguồn sẽ để lại khoảng trắng đúng bằng phần dôi ("nhảy dòng").
     anchors = (segment_anchors(reg, n_seg)
-               if reg["rotation"] == 0 and n_seg > 1
+               if reg["rotation"] == 0 and n_seg > 1 and not reg.get("bullet_lines")
                and cfg.get("layout", {}).get("paragraph_anchor", True) else None)
 
     def layout_at(s: float, cap_one_line: bool = False):
@@ -936,6 +997,8 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             # Gate 3 so chuỗi nguyên văn, mà dãy chấm đã bị phát lại — phải khai ra để gate
             # chuẩn hoá đúng vùng này, không nới lỏng phép so cho vùng khác.
             **({"dot_leader": dot_leader_n} if dot_leader_n else {}),
+            # Dòng nào thuộc đoạn nào — bước paint cần để dời dấu gạch đầu dòng theo chữ.
+            "line_seg": list(best.get("line_seg") or [0] * len(out_lines)),
             "lines": out_lines}, issues
 
 
@@ -1079,7 +1142,7 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
     issues: list[dict] = []
     manifest = {"generated_at": utc_now(), "partial": bool(pending or pages_filter),
                 "pages": {}, "regions": [], "skipped": [], "blank_rules_removed": [],
-                "toc_leaders": [],
+                "toc_leaders": [], "bullet_moves": 0,
                 "issues": issues}
 
     doc = pymupdf.open(job.source_pdf)
@@ -1178,6 +1241,31 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
         # `apply_redactions` vì lượt đó mới thật sự bỏ line-art; vẽ lại thì phải sau khi
         # `insert_text` xong, nếu không nét mới bị chính redaction ăn mất.
         page_draw = page.get_drawings() if cfg.get("layout", {}).get("toc_leader", True) else []
+        # Dấu gạch đầu dòng đi theo chữ: xoá dấu cũ ở lượt redaction, vẽ lại sau khi đặt
+        # chữ, dời đúng bằng chênh lệch baseline. Nhờ vậy chữ được chảy liên tục mà dấu vẫn
+        # đứng cạnh mục của nó — không còn phải neo baseline, tức không còn khoảng trắng dôi
+        # ("nhảy dòng") khi đoạn dịch ngắn hơn đoạn nguồn.
+        moves = []
+        for reg, fr in ok_regions:
+            mk = bullet_marks(reg, page_draw) if page_draw else []
+            if not mk:
+                continue
+            got = segment_source_lines(reg, max(fr["line_seg"]) + 1)
+            if not got or got[1] != 0:
+                continue          # không ánh xạ được theo dấu thì đừng dời dấu
+            where = {src: si for si, src in enumerate(got[0])}
+            src_base = [l["spans"][0]["origin"][1] for l in reg["lines"]]
+            for li, d in mk:
+                si = where.get(li)
+                if si is None:
+                    continue
+                first = next((k for k, s2 in enumerate(fr["line_seg"]) if s2 == si), None)
+                if first is None:
+                    continue
+                dy = fr["lines"][first]["y"] - src_base[li]
+                if abs(dy) >= 0.05:
+                    moves.append((d, dy))
+
         leaders = []
         # Anh em đo theo DÒNG nguồn của mọi region trên trang, kể cả region `keep` không
         # vẽ: số trang mục lục thường là `keep`, và ở dòng mục lục mà PDF khai hai "line"
@@ -1213,10 +1301,12 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             manifest["blank_rules_removed"] += [
                 {"page": pno, "region_id": reg["region_id"],
                  "rect": [round(v, 2) for v in r]} for reg, r in blanks]
-        if leaders:
+        if leaders or moves:
             for _, _, run in leaders:
                 for r in run["rects"]:
                     page.add_redact_annot(r, fill=False)
+            for d, _ in moves:
+                page.add_redact_annot(d["rect"] + (-0.4, -0.4, 0.4, 0.4), fill=False)
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
                                   graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
                                   text=pymupdf.PDF_REDACT_TEXT_NONE)
@@ -1284,11 +1374,18 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
                                   round(run["x1"], 2), round(run["y"] + 0.6, 2)],
                           "new": [round(x0, 2), round(run["y"] - 0.6, 2),
                                   round(run["x1"], 2), round(run["y"] + 0.6, 2)]})
+        for d, dy in moves:
+            redraw_mark(page, d, dy)
+        manifest["bullet_moves"] += len(moves)
         manifest["toc_leaders"] += drawn
         # Dải khai cho Gate 6 phải là HỢP của khung cũ và mới: tiêu đề dịch dài hơn thì
         # nét mới bắt đầu phải hơn nét cũ, và đoạn ở giữa mất chấm — vẫn là pixel đổi.
         leader_bands = [[min(d["old"][0], d["new"][0]), d["new"][1],
                          max(d["old"][2], d["new"][2]), d["new"][3]] for d in drawn]
+        # Dấu đã dời: khai HỢP khung cũ và mới cho Gate 6, cùng cách với gạch dẫn.
+        leader_bands += [[d["rect"].x0 - 0.6, min(d["rect"].y0, d["rect"].y0 + dy) - 0.6,
+                          d["rect"].x1 + 0.6, max(d["rect"].y1, d["rect"].y1 + dy) + 0.6]
+                         for d, dy in moves]
 
         # link preservation (spec §9.4)
         if cfg["render"]["preserve_links"]:

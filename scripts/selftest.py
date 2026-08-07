@@ -1119,6 +1119,28 @@ check("bullet: số mục không khớp số đoạn thì lùi về hình mẫu 
 check("bullet: vùng không có dấu thì không đụng gì",
       (_fp.segment_source_lines(_bl_reg([27.4, 38.7, 38.7], []), 3) or (None, None))[1] != 0)
 
+# ── dời dấu gạch đầu dòng theo chữ (1.9.26) ────────────────────────────
+# Neo baseline (1.9.20) giữ chữ khớp dấu khi dấu ĐỨNG YÊN, nhưng đoạn dịch ngắn hơn nguồn thì
+# phần dôi thành khoảng trắng — "nhảy dòng". Dời được dấu thì chữ chảy liên tục.
+_mkd = lambda x, y: {"rect": _mu.Rect(x, y - 1.1, x + 2.2, y + 1.1), "type": "f",  # noqa: E731
+                     "fill": (0, 0, 0), "color": None, "width": None,
+                     "items": [("l", _mu.Point(x, y), _mu.Point(x + 2.2, y))]}
+_mreg = {"bbox": [27.4, 92.0, 200.0, 126.0], "bullet_lines": [0, 1],
+         "lines": [{"bbox": [38.7, 92.0, 160.0, 102.0], "spans": [{"origin": [38.7, 100.0]}]},
+                   {"bbox": [38.7, 104.0, 160.0, 114.0], "spans": [{"origin": [38.7, 112.0]}]}]}
+_pairs = _fp.bullet_marks(_mreg, [_mkd(29.4, 97.5), _mkd(29.4, 109.5)])
+check("dời dấu: ghép được dấu với dòng nó đánh",
+      [li for li, _ in _pairs] == [0, 1], str([li for li, _ in _pairs]))
+check("dời dấu: vùng chưa khai bullet_lines thì không ghép gì",
+      _fp.bullet_marks({**_mreg, "bullet_lines": []}, [_mkd(29.4, 97.5)]) == [])
+# Ba mảnh phải đi cùng nhau, thiếu một mảnh là hỏng: xoá dấu cũ, vẽ lại dấu mới, và TẮT neo.
+check("dời dấu: xoá dấu cũ trong lượt redaction",
+      'for d, _ in moves:' in _fpsrc and "page.add_redact_annot(d[\"rect\"]" in _fpsrc)
+check("dời dấu: vẽ lại dấu sau khi đặt chữ",
+      "redraw_mark(page, d, dy)" in _fpsrc)
+check("dời dấu: vùng có dấu thì KHÔNG neo baseline nữa",
+      'not reg.get("bullet_lines")' in _fpsrc)
+
 # ── neo baseline theo đoạn (1.9.20) ────────────────────────────────────
 # Dấu `•` `◇` `∘` là glyph riêng, neo cứng ở baseline nguồn. Fitter rải dòng liên tục nên
 # đoạn i chỉ rơi đúng dấu của nó khi mọi đoạn trước chiếm đúng số dòng như nguồn.
