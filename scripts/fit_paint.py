@@ -217,6 +217,32 @@ def role_face(reg: dict, role: str) -> dict:
     return pick
 
 
+def ink_size(reg: dict) -> float:
+    """Cỡ chữ gốc của vùng: median cỡ theo từng ký tự CÓ NÉT MỰC.
+
+    Trước 1.9.42 phép median đếm cả khoảng trắng. Bản gốc hay đệm một span dấu cách cỡ khác
+    ngay đầu vùng, và span đó dài hơn phần chữ thật thì nó THẮNG phiếu.
+
+    Ca thật 2026-08-09, `E-BOX 48100R Sol-Ark package` và `V5 Sol-Ark packages` trang 2, dòng
+    cuối bảng thông số: run 0 = **20 dấu cách ở 13.6pt**, run 1 = `10 Years ` 9 ký tự ở 8.0pt.
+    Median tính cả trắng ra 13.6 → `10 năm` vẽ to gần gấp đôi mọi dòng quanh nó và tràn lên
+    4.99pt vào dòng `Kích thước` ở trên (`G4_OUT_OF_CONTAINER` + `G4_COLLISION`). Quét cả kho
+    ra 10 vùng / 8 job, trong đó 6 job đã giao khách với mức lệch 1–2.6pt — đủ kín để lọt qua
+    mọi lần duyệt trước.
+
+    Cùng luật với `ink_base_x` (trục x, 1.8.0/1.9.9) và `role_style`/`role_face` (trục kiểu
+    chữ, 1.9.34/1.9.35): **span khoảng trắng có advance nhưng không vẽ gì, nên nó không được
+    quyết định thứ gì về hình thức của chữ thật.** Đây là trục thứ ba, và là trục cuối.
+
+    Vùng toàn khoảng trắng thì không có gì để so — giữ nguyên hành vi cũ.
+    """
+    ink = [r["size"] for r in reg["runs"] for ch in r["text"] if ch.strip()]
+    if ink:
+        return statistics.median(ink)
+    allc = [r["size"] for r in reg["runs"] for _ in r["text"]]
+    return statistics.median(allc) if allc else reg["runs"][0]["size"]
+
+
 def ink_base_x(reg: dict, span_x: float) -> float:
     """Điểm bắt đầu vẽ theo NÉT MỰC đầu tiên, không theo origin của span đầu.
 
@@ -1058,8 +1084,7 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
                            "reviewer xác nhận (spec §11.4)"))
             break
 
-    src_sizes = [r["size"] for r in reg["runs"] for _ in r["text"]]
-    src_size = statistics.median(src_sizes) if src_sizes else reg["runs"][0]["size"]
+    src_size = ink_size(reg)
     floor = src_size * cfg["fonts"]["minimum_ratio"]
     c = reg["container"]
     cw, chh = c[2] - c[0], c[3] - c[1]

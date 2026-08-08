@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.42] - 2026-08-09
+
+### Fixed
+
+- **Whitespace no longer outvotes real text on font size.** `src_size` is the per-character
+  median of run sizes, and it counted spaces. A source that pads a region with a differently
+  sized whitespace span wins that vote whenever the padding is longer than the text.
+
+  Measured on `E-BOX 48100R Sol-Ark package` and `V5 Sol-Ark packages`, page 2, last row of
+  the spec table: run 0 is **20 spaces at 13.6pt**, run 1 is `10 Years ` — 9 characters at
+  8.0pt. The median came out 13.6, so `10 năm` was painted at nearly twice the size of every
+  neighbouring row and overflowed 4.99pt into the row above (`G4_OUT_OF_CONTAINER` plus
+  `G4_COLLISION`).
+
+  A sweep of the whole job store found **10 regions across 8 jobs**, **6 of them already
+  delivered to customers**, at deltas of 1–2.6pt — small enough to survive every review so
+  far.
+
+  This is the third and final axis of the "space padding" family, after the x axis
+  (`ink_base_x`, 1.8.0/1.9.9) and the typeface axis (`role_style`/`role_face`, 1.9.34/1.9.35).
+  One rule throughout: a whitespace span carries advance but paints nothing, so it decides
+  nothing about how real text looks. Regions that are entirely whitespace keep the old
+  behaviour.
+
 ## [1.9.41] - 2026-08-09
 
 ### Fixed

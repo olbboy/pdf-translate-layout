@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.41"
+  version: "1.9.42"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.41 (engine `1.9.41`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.42 (engine `1.9.42`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -155,6 +155,16 @@ metadata:
 > Mảnh nền phải phủ ≥50% chiều cao vùng chữ — ngưỡng này tách nền khỏi **nét kẻ ngang cắt qua
 > chữ** (dày <1pt, phủ ~3%, vẫn chặn như cũ). bbox chữ của region khác không bao giờ được tính
 > là nền dù trải rộng, nếu không nới sẽ đè lên hàng xóm.
+> **1.9.42** → cỡ chữ gốc tính theo ký tự CÓ MỰC. `src_size` là median cỡ theo từng ký tự và
+> trước đây đếm cả khoảng trắng, nên span đệm dài hơn phần chữ thật thì nó thắng phiếu. Ca
+> thật `E-BOX 48100R Sol-Ark package` và `V5 Sol-Ark packages` trang 2, dòng cuối bảng thông
+> số: run 0 = **20 dấu cách 13.6pt**, run 1 = `10 Years ` 9 ký tự 8.0pt → `10 năm` vẽ ở
+> 13.6pt, to gần gấp đôi mọi dòng quanh nó và tràn 4.99pt lên dòng trên. Quét cả kho: **10
+> vùng / 8 job**, trong đó **6 job đã giao khách** ở mức lệch 1–2.6pt — đủ kín để lọt qua mọi
+> lần duyệt. Đây là trục thứ ba và là trục cuối của họ lỗi "đệm space", sau trục x
+> (`ink_base_x`, 1.8.0/1.9.9) và trục kiểu chữ (`role_style`/`role_face`, 1.9.34/1.9.35).
+> Một luật chung: span khoảng trắng có advance nhưng không vẽ gì, nên không được quyết định
+> thứ gì về hình thức của chữ thật. Vùng toàn khoảng trắng giữ nguyên hành vi cũ.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:

@@ -1636,6 +1636,27 @@ check("base_x: side-bearing âm bị chặn trong dòng, không lan ra vùng",
 check("base_x: region không có lines thì trả nguyên span_x",
       _fp.ink_base_x({"lines": []}, 45.7) == 45.7)
 
+# ── ink_size: trục cỡ chữ của họ lỗi "đệm space" — 1.9.42 ───────────────
+# Ca thật: `E-BOX 48100R Sol-Ark package` tr.2 dòng `Warranty / 10 Years`. Run 0 là 20 dấu
+# cách ở 13.6pt, run 1 là `10 Years ` (9 ký tự) ở 8.0pt. Median đếm cả trắng ra 13.6 → dòng
+# dịch vẽ to gần gấp đôi hàng xóm và tràn 4.99pt lên dòng trên.
+def _runs(*pairs):
+    return {"runs": [{"size": s, "text": t, "role": "body"} for s, t in pairs]}
+
+check("cỡ chữ không để 20 dấu cách 13.6pt lấn lướt 9 ký tự 8pt",
+      _fp.ink_size(_runs((13.6, " " * 20), (8.0, "10 Years "))) == 8.0)
+check("không có đệm thì kết quả không đổi",
+      _fp.ink_size(_runs((8.0, "10 Years"))) == 8.0)
+check("vùng toàn khoảng trắng giữ nguyên hành vi cũ",
+      _fp.ink_size(_runs((13.6, "   "))) == 13.6)
+check("median vẫn tính theo số ký tự CÓ MỰC, không phải theo số run",
+      _fp.ink_size(_runs((9.0, "aaa"), (12.0, "bbbbb"), (12.0, "cc"))) == 12.0)
+# Mutation: đếm cả khoảng trắng thì case đầu phải trả 13.6 — nếu không, case không đo gì.
+import statistics as _st
+_mut = _runs((13.6, " " * 20), (8.0, "10 Years "))
+check("mutation: đếm cả khoảng trắng thì hỏng lại",
+      _st.median([r["size"] for r in _mut["runs"] for _ in r["text"]]) == 13.6)
+
 # ── Gate 3 nhánh keep: chữ còn hay mất, không phải thứ tự (1.9.5) ───────
 # Vùng keep engine không đụng tới, nên chuỗi trích xuất lệch thứ tự chỉ nói lên thứ tự đọc
 # của PDF chứ không nói mất chữ. Ca thật HV48100 manual p15: callout `1\n2` trích ra '2 1'
