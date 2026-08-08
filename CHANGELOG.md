@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.38] - 2026-08-08
+
+### Fixed
+
+- **Source text an image draws over is no longer repainted.** The engine paints the
+  translation last, so text the source hides *under* an image surfaces *on top of* it in the
+  translation — the translation carries text the original does not show. **No gate caught
+  it:** Gate 3 finds the text (it really is on the page), Gate 4 sees it inside its
+  container, and Gate 6 treats the change as being *inside* the mask. Real case: Pi Station
+  261 EX page 24 — the whole page is one 2481×3508 image, the figure caption sits underneath
+  it and the source therefore never prints it; the translation printed `Hình 3.4 …` across
+  the foot of the cabinet.
+
+  The test **renders and compares pixels** (drop the text in the box, keep images and
+  vectors, re-render the same clip) rather than reading content-stream order: a page has
+  several streams, nested form XObjects and transparency, so reading the order means
+  re-implementing the renderer.
+
+  Only regions lying ≥85% inside an image are tested. Measured over 14 jobs: **9 regions**
+  pass that filter, **2** are genuinely hidden (one was already `keep`, so exactly **1** was
+  being painted wrongly). Labels drawn *on top of* a figure — the common case, the other 7 —
+  change pixels and are untouched.
+
+  A hidden region goes to `skipped` with reason `SOURCE_TEXT_OCCLUDED` plus a P2 issue. Text
+  baked into an image is the DTP step's job, not the engine's.
+
+  **Stage 6 only** — re-running stages 6 → 7 is enough for an existing job.
+
 ## [1.9.37] - 2026-08-08
 
 ### Fixed

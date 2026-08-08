@@ -404,6 +404,42 @@ CENTERED_TOL_PT = 3.0
 SIBLING_GAP_PT = 1.0
 
 
+OCCLUSION_COVER = 0.85   # phần bbox phải nằm trong ảnh mới đáng bỏ công dựng ảnh thử
+OCCLUSION_DPI = 150
+
+
+def occluded_by_image(doc, pno: int, bbox: list, img_rects: list) -> bool:
+    """Chữ nguồn trong `bbox` có bị một ảnh vẽ ĐÈ LÊN nên không nhìn thấy được không?
+
+    Vì sao cần: engine vẽ bản dịch SAU cùng, nên chữ mà bản gốc giấu dưới ảnh lại nổi lên
+    trên ảnh ở bản dịch — bản dịch có chữ mà bản gốc không có, và không gate nào thấy: Gate
+    3 tìm thấy chữ (nó có thật), Gate 4 thấy nằm trong khung, Gate 6 coi thay đổi đó là
+    NẰM TRONG mask nên bỏ qua. Ca thật: Pi Station 261 EX trang 24 — trang là một ảnh phủ
+    kín 100%, chú thích hình nằm dưới ảnh; bản dịch in "Hình 3.4 …" vắt ngang chân tủ.
+
+    Phép thử là dựng ảnh chứ không đọc thứ tự content stream: một trang có nhiều stream,
+    có form XObject lồng nhau, và trong suốt — đọc thứ tự thì phải mô phỏng lại cả trình
+    vẽ. Dựng hai lần rồi so pixel trả lời đúng câu hỏi cần hỏi: xoá chữ đi thì trang có
+    đổi không.
+
+    Chỉ chạy cho vùng nằm gần trọn trong một ảnh (`OCCLUSION_COVER`) — đo trên 14 job:
+    9 vùng lọt sàng lọc này, 2 vùng thật sự bị che. Nhãn vẽ TRÊN hình (ca thường gặp) đổi
+    pixel nên không dính.
+    """
+    b = pymupdf.Rect(*bbox)
+    if b.is_empty or not any((b & r).get_area() > OCCLUSION_COVER * b.get_area()
+                             for r in img_rects):
+        return False
+    before = doc[pno].get_pixmap(dpi=OCCLUSION_DPI, clip=b).samples
+    probe = pymupdf.open(doc.name)
+    pp = probe[pno]
+    pp.add_redact_annot(b)
+    pp.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)   # bỏ chữ, giữ ảnh/vector
+    after = pp.get_pixmap(dpi=OCCLUSION_DPI, clip=b).samples
+    probe.close()
+    return before == after
+
+
 def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
                      margins: tuple[float, float], align: str,
                      share_gap: list = ()) -> tuple[list, str | None] | None:
@@ -1419,7 +1455,18 @@ def paint(job: Job, pages_filter: set[int] | None, allow_partial: bool) -> None:
             expanded += subs or [reg]
         regs = expanded
 
+        img_rects = [page.get_image_bbox(i) for i in page.get_images(full=True)]
         for reg in regs:
+            if img_rects and occluded_by_image(doc, pno, reg["bbox"], img_rects):
+                issues.append(make_issue(
+                    "SOURCE_TEXT_OCCLUDED", "P2", STAGE,
+                    "chữ nguồn bị ảnh vẽ đè lên nên bản gốc không nhìn thấy — không vẽ bản "
+                    "dịch, nếu không bản dịch sẽ có chữ mà bản gốc không có. Chữ trong ảnh "
+                    "là việc của bước DTP",
+                    page=pno, region_id=reg["region_id"]))
+                manifest["skipped"].append({"region_id": reg["region_id"],
+                                            "reason": "SOURCE_TEXT_OCCLUDED"})
+                continue
             ctx = expand_ctx
             if expand_ctx is not None:
                 # bbox của chính region không phải vật cản của nó — nhưng lọc ra BẢN SAO,

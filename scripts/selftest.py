@@ -1831,6 +1831,35 @@ check("nối bằng rỗng, không chèn dấu cách", _uw({"MEAS_1": "55\n°C"}
 check("số đo có dấu cách thật giữ nguyên dấu cách",
       _uw({"MEAS_1": "50 mm", "BRAND_1": "Pytes"}) == {"MEAS_1": "50 mm", "BRAND_1": "Pytes"})
 
+# ── chữ nguồn bị ảnh che (engine 1.9.38) ────────────────────────────────────────────
+# Engine vẽ bản dịch sau cùng nên chữ mà bản gốc giấu dưới ảnh lại nổi lên TRÊN ảnh ở bản
+# dịch. Không gate nào thấy: Gate 3 tìm ra chữ, Gate 4 thấy trong khung, Gate 6 coi là thay
+# đổi nằm trong mask. Ca thật: Pi Station 261 EX trang 24.
+import tempfile as _oc_tf, os as _oc_os  # noqa: E402
+from fit_paint import occluded_by_image as _obi  # noqa: E402
+
+_oc_dir = _oc_tf.mkdtemp()
+_oc_path = _oc_os.path.join(_oc_dir, "occl.pdf")
+_oc = pymupdf.open()
+_ocp = _oc.new_page(width=200, height=200)
+_oc_pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 64, 64), False)
+_oc_pix.set_rect(_oc_pix.irect, (210, 40, 40))
+_ocp.insert_text((20, 100), "hidden caption", fontsize=11)       # chữ vẽ TRƯỚC
+_ocp.insert_image(pymupdf.Rect(0, 0, 200, 200), pixmap=_oc_pix)  # ảnh phủ kín trang
+_ocp.insert_text((20, 160), "label on top", fontsize=11)         # nhãn vẽ SAU, nhìn thấy
+_oc.save(_oc_path)
+_oc.close()
+_oc = pymupdf.open(_oc_path)
+_full = [r for im in _oc[0].get_images(full=True) for r in _oc[0].get_image_rects(im[0])]
+check("ảnh thử phủ kín trang", len(_full) == 1 and _full[0].get_area() > 39000, str(_full))
+check("chữ bị ảnh phủ kín → nhận ra là bị che",
+      _obi(_oc, 0, [20, 88, 120, 103], _full) is True)
+check("nhãn vẽ trên cùng → KHÔNG bị coi là bị che",
+      _obi(_oc, 0, [20, 148, 120, 163], _full) is False)
+check("vùng không nằm trong ảnh nào thì bỏ qua, không dựng ảnh thử",
+      _obi(_oc, 0, [20, 88, 120, 103], []) is False)
+_oc.close()
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")

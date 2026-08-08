@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.37"
+  version: "1.9.38"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.37 (engine `1.9.37`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.38 (engine `1.9.38`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,22 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.38** **chữ nguồn bị ảnh vẽ đè lên thì KHÔNG vẽ bản dịch.** Engine vẽ bản dịch sau
+> cùng, nên chữ mà bản gốc giấu dưới ảnh lại nổi lên TRÊN ảnh ở bản dịch — bản dịch có chữ
+> mà bản gốc không có. **Không gate nào thấy:** Gate 3 tìm ra chữ (nó có thật trên trang),
+> Gate 4 thấy nằm trong khung, Gate 6 coi thay đổi đó là NẰM TRONG mask nên bỏ qua. Ca thật:
+> Pi Station 261 EX trang 24 — cả trang là một ảnh 2481×3508 phủ kín, chú thích hình nằm
+> dưới ảnh nên bản gốc không in nó; bản dịch in `Hình 3.4 …` vắt ngang chân tủ.
+> Phép thử là **dựng ảnh rồi so pixel** (xoá chữ trong khung, giữ ảnh/vector, render lại
+> cùng khung) chứ không đọc thứ tự content stream: một trang có nhiều stream, form XObject
+> lồng nhau và trong suốt — đọc thứ tự thì phải mô phỏng lại cả trình vẽ.
+> Chỉ chạy cho vùng nằm ≥85% trong một ảnh. Đo trên 14 job: **9 vùng** lọt sàng lọc, **2**
+> thật sự bị che (1 vốn đã là `keep`, nên đúng **1** vùng đang bị vẽ sai). Nhãn vẽ TRÊN hình
+> — ca thường gặp, 7/9 vùng còn lại — đổi pixel nên không dính.
+> Vùng bị che vào `skipped` với lý do `SOURCE_TEXT_OCCLUDED` kèm issue P2. Chữ nằm trong
+> ảnh là việc của bước DTP, không phải của engine.
+> **Chỉ đụng stage 6** — job cũ chạy lại stage 6 → 7 là hưởng.
 
 > **1.9.37** **ngắt dòng nằm trong giá trị placeholder.** `\s?` của `MEAS_RE`/`STD_RE`/
 > `MODEL_RE` khớp cả `\n`, nên một số đo bị bản gốc ngắt dòng giữa chừng đi vào bảng tra
