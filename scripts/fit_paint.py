@@ -494,7 +494,16 @@ def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
     want = need_w + pad
 
     def ok(x0: float, x1: float) -> bool:
-        return x0 >= left_lim and x1 <= right_lim and x1 - x0 > c[2] - c[0]
+        # Mép nào KHÔNG dịch ra khỏi khung cũ thì không phải xin phép hàng xóm: nó có lấn
+        # vào đâu mà chặn. Thiếu vế `>= c[0]` thì vùng có hàng xóm DÍNH SÁT mép trái không
+        # bao giờ nới được — `lim` của khe rộng 0 rơi vào `c[0] + SIBLING_GAP_PT`, lớn hơn
+        # chính mép trái của nó, nên cả hai phương án đều trượt dù bên phải trống trơn.
+        # Ca thật: tiêu đề bị nguồn xé làm hai text object giữa từ (`3.6.4. PCS vie` + `w`,
+        # `Chapter 2 System Introductio` + `n`) — mảnh sau chỉ nới sang PHẢI, không đụng gì
+        # tới mảnh trước, mà vẫn bị ép thu cỡ chữ.
+        left_ok = x0 >= left_lim or x0 >= c[0]
+        right_ok = x1 <= right_lim or x1 <= c[2]
+        return left_ok and right_ok and x1 - x0 > c[2] - c[0]
 
     if centered:
         # Tựa căn giữa theo trang: nới đối xứng VÀ chuyển sang alignment center. Text căn

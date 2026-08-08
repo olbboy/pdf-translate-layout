@@ -859,6 +859,29 @@ _gFixed = _fp.expand_container(_capB, 50.0, [_capA["bbox"], _capC["bbox"]],
 check("vật cản cố định vẫn chặn tới mép",
       _gFixed is None or _gFixed[0][0] >= 90.4 - 0.01, str(_gFixed))
 
+# ── hàng xóm DÍNH SÁT mép trái không được chặn đường nới sang PHẢI (1.9.39) ──
+# Nguồn hay xé một tiêu đề làm hai text object GIỮA TỪ (`3.6.4. PCS vie` + `w`,
+# `Chapter 2 System Introductio` + `n`). Khe giữa hai mảnh bằng 0, nên luật chia đôi khe cho
+# `left_lim = c[0] + SIBLING_GAP_PT` — lớn hơn chính mép trái của mảnh sau. Mọi phương án
+# nới đều trượt và mảnh sau bị ép thu cỡ chữ, dù bên phải nó trống tới tận lề.
+_adjA = _heading((56.6, 391.1, 135.8, 408.3), (56.6, 391.1, 135.8, 413.3),
+                 rtype="list_item", src="3.6.4. PCS vie")
+_adjB = _heading((135.8, 391.1, 145.4, 408.3), (135.8, 391.1, 167.4, 413.3),
+                 rtype="paragraph", src="w")
+_adj = [_adjA["bbox"], _adjB["bbox"]]
+_gAdj = _fp.expand_container(_adjB, 41.3, [_adjA["bbox"]], _PAGE,
+                             (56.6, 538.5), "left", _adj)
+check("mảnh sau dính sát mảnh trước vẫn nới được sang phải", _gAdj is not None, str(_gAdj))
+check("... và mép TRÁI của nó không nhúc nhích",
+      _gAdj is not None and abs(_gAdj[0][0] - 135.8) < 0.01, str(_gAdj))
+check("... nới đủ bề ngang cần", _gAdj is not None and _gAdj[0][2] - _gAdj[0][0] >= 41.3,
+      str(_gAdj))
+# Chiều ngược lại vẫn phải bị chặn: mảnh sau KHÔNG được lấn ngược sang chỗ mảnh trước.
+_gBack = _fp.expand_container(_adjB, 41.3, [_adjA["bbox"]], _PAGE,
+                              (56.6, 145.4), "left", _adj)
+check("hết chỗ bên phải thì không được lùi sang trái đè hàng xóm",
+      _gBack is None or _gBack[0][0] >= 135.8 - 0.01, str(_gBack))
+
 # ── nhận khung nới khi nó bớt DÒNG chứ không chỉ khi tăng cỡ chữ (1.9.14) ──
 # Ca thật V5 p17: `7.1 Unable to start` → `7.1 Không khởi động được` cần 157.0pt trong khung
 # 132.0pt. Bản dự phòng hai dòng đã ở cỡ đầy nên cỡ chữ không thể lên nữa; điều kiện cũ

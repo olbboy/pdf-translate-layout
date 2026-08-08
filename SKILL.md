@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.38"
+  version: "1.9.39"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.38 (engine `1.9.38`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.39 (engine `1.9.39`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,19 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.39** **hàng xóm dính sát mép trái không được chặn đường nới sang PHẢI.** Nguồn hay xé
+> một tiêu đề làm hai text object **giữa từ** (`3.6.4. PCS vie` + `w`, `Chapter 2 System
+> Introductio` + `n`). Khe giữa hai mảnh bằng 0, nên luật chia đôi khe của 1.9.30 đặt
+> `left_lim = c[0] + SIBLING_GAP_PT` — nằm BÊN PHẢI chính mép trái của mảnh sau. Mọi phương án
+> nới đều trượt, mảnh sau bị ép thu cỡ chữ, dù bên phải nó trống tới tận lề.
+> Mép nào không dịch ra khỏi khung cũ thì không lấn của ai, nên không phải xin phép: nới ra
+> XA hàng xóm được cho qua, nới VÀO hàng xóm vẫn chặn y như cũ — test 1.9.30 chốt luật chia
+> đôi khe giữ nguyên, không sửa một dòng.
+> Đo trên job Pi Station 261 EX: **4 vùng đổi, tất cả đều TĂNG cỡ, 0 vùng mất, 0 vùng đổi số
+> dòng** — `Chương 3 Các sản phẩm` trở lại một cỡ 15,9pt duy nhất (trước đó hai nửa vẽ 14,04
+> và 15,90), và `3.6.4. Hình dạng PCS` vừa khung ở đúng cỡ thay vì phải cắt ngắn tiêu đề.
+> **Chỉ đụng stage 6** — job cũ chạy lại stage 6 → 7 là hưởng.
 
 > **1.9.38** **chữ nguồn bị ảnh vẽ đè lên thì KHÔNG vẽ bản dịch.** Engine vẽ bản dịch sau
 > cùng, nên chữ mà bản gốc giấu dưới ảnh lại nổi lên TRÊN ảnh ở bản dịch — bản dịch có chữ

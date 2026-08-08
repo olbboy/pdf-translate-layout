@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.39] - 2026-08-08
+
+### Fixed
+
+- **A neighbour flush against the left edge no longer blocks expansion to the right.** Source
+  PDFs routinely split one heading into two text objects **mid-word** (`3.6.4. PCS vie` + `w`,
+  `Chapter 2 System Introductio` + `n`). The gap between the two fragments is zero, so the
+  share-the-gap rule from 1.9.30 put `left_lim` at `c[0] + SIBLING_GAP_PT` — to the *right* of
+  the second fragment's own left edge. Every expansion candidate then failed and the fragment
+  was shrunk instead, even though the space to its right was empty all the way to the margin.
+
+  An edge that does not move outside the original container is not taking anything from a
+  neighbour, so it no longer has to ask permission. Expansion away from the neighbour is
+  allowed; expansion *into* the neighbour is still bounded exactly as before, and the 1.9.30
+  test that pins the half-the-gap rule is unchanged.
+
+  Measured on the Pi Station 261 EX job: **4 regions change, all upward, none lost, no
+  line-count change** — `Chương 3 Các sản phẩm` goes back to a single 15.9pt size (its two
+  halves were rendering at 14.04 and 15.90), and `3.6.4. Hình dạng PCS` now fits at full size
+  instead of forcing the title to be cut short.
+
+  **Stage 6 only** — re-running stages 6 → 7 is enough for an existing job.
+
 ## [1.9.38] - 2026-08-08
 
 ### Fixed
