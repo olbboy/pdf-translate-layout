@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.43] - 2026-08-09
+
+### Fixed
+
+- **A one-character margin no longer decides a region's font size.** The median is the wrong
+  statistic for a region carrying two genuine sizes: it collapses onto whichever cluster has
+  more characters, however slim the lead.
+
+  Measured on `V16 user manual` page 11, cell
+  `Integrated Thermal Aerosol Fire Suppression Module`: the label is 45 inked characters at
+  9.0pt, the footnote 46 at 5.0pt. Forty-six beat forty-five, so the whole cell painted at
+  5.0pt and the label came out 44% smaller than the source. The previously released build
+  showed 7.0pt only because the median still counted whitespace back then and happened to land
+  between the two — luck, not a rule.
+
+  When the runner-up cluster holds at least 80% of the leader's inked characters, neither wins:
+  take the **larger** of the two sizes. The label is what the eye reads first, and the fitter
+  still shrinks it if it does not fit — coming down from the right size is safer than scaling
+  up from the wrong one. On that cell: src_size 9.0 fits at 8.96pt over 5 lines with no issues.
+
 ## [1.9.42] - 2026-08-09
 
 ### Fixed

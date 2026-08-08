@@ -1640,6 +1640,9 @@ check("base_x: region không có lines thì trả nguyên span_x",
 # Ca thật: `E-BOX 48100R Sol-Ark package` tr.2 dòng `Warranty / 10 Years`. Run 0 là 20 dấu
 # cách ở 13.6pt, run 1 là `10 Years ` (9 ký tự) ở 8.0pt. Median đếm cả trắng ra 13.6 → dòng
 # dịch vẽ to gần gấp đôi hàng xóm và tràn 4.99pt lên dòng trên.
+import statistics as _stats_ink
+
+
 def _runs(*pairs):
     return {"runs": [{"size": s, "text": t, "role": "body"} for s, t in pairs]}
 
@@ -1651,11 +1654,23 @@ check("vùng toàn khoảng trắng giữ nguyên hành vi cũ",
       _fp.ink_size(_runs((13.6, "   "))) == 13.6)
 check("median vẫn tính theo số ký tự CÓ MỰC, không phải theo số run",
       _fp.ink_size(_runs((9.0, "aaa"), (12.0, "bbbbb"), (12.0, "cc"))) == 12.0)
+
+# ── luật hoà phiếu giữa hai cỡ chữ thật — 1.9.43 ───────────────────────
+# Ca thật `V16 user manual` tr.11: nhãn chính 45 ký tự ở 9.0pt, chú thích 46 ký tự ở 5.0pt.
+# Median rơi về cụm đông hơn dù chỉ hơn MỘT ký tự → cả ô vẽ 5.0pt, nhãn nhỏ đi 44%.
+check("hai cụm cỡ chữ xấp xỉ nhau thì lấy cỡ lớn hơn",
+      _fp.ink_size(_runs((9.0, "a" * 45), (5.0, "b" * 46))) == 9.0)
+check("chênh lệch rõ thì KHÔNG hoà, vẫn theo median",
+      _fp.ink_size(_runs((9.0, "a" * 10), (5.0, "b" * 90))) == 5.0)
+check("hoà phiếu không cứu lại được span khoảng trắng",
+      _fp.ink_size(_runs((13.6, " " * 20), (8.0, "10 Years "))) == 8.0)
+# Mutation: bỏ luật hoà thì ca V16 phải trả 5.0 trở lại.
+check("mutation: không có luật hoà thì ô V16 rơi về 5.0",
+      _stats_ink.median([9.0] * 45 + [5.0] * 46) == 5.0)
 # Mutation: đếm cả khoảng trắng thì case đầu phải trả 13.6 — nếu không, case không đo gì.
-import statistics as _st
 _mut = _runs((13.6, " " * 20), (8.0, "10 Years "))
 check("mutation: đếm cả khoảng trắng thì hỏng lại",
-      _st.median([r["size"] for r in _mut["runs"] for _ in r["text"]]) == 13.6)
+      _stats_ink.median([r["size"] for r in _mut["runs"] for _ in r["text"]]) == 13.6)
 
 # ── Gate 3 nhánh keep: chữ còn hay mất, không phải thứ tự (1.9.5) ───────
 # Vùng keep engine không đụng tới, nên chuỗi trích xuất lệch thứ tự chỉ nói lên thứ tự đọc

@@ -7,6 +7,7 @@ Chạy: python3 fit_paint.py --job <job_dir> [--pages 0,1,2] [--allow-partial]
 from __future__ import annotations
 
 import argparse
+import collections
 import os
 import re
 import statistics
@@ -217,6 +218,10 @@ def role_face(reg: dict, role: str) -> dict:
     return pick
 
 
+# Cụm nhì đạt tỷ lệ này so với cụm nhất thì coi là hoà — xem `ink_size`.
+TIE_COUNT_RATIO = 0.8
+
+
 def ink_size(reg: dict) -> float:
     """Cỡ chữ gốc của vùng: median cỡ theo từng ký tự CÓ NÉT MỰC.
 
@@ -235,12 +240,30 @@ def ink_size(reg: dict) -> float:
     quyết định thứ gì về hình thức của chữ thật.** Đây là trục thứ ba, và là trục cuối.
 
     Vùng toàn khoảng trắng thì không có gì để so — giữ nguyên hành vi cũ.
+
+    **Luật hoà phiếu (1.9.43).** Median là thống kê sai cho vùng có HAI cỡ chữ thật gần bằng
+    nhau về số ký tự: nó rơi về cụm đông hơn dù chỉ hơn một ký tự, nên một chênh lệch vô
+    nghĩa lật cả cỡ chữ của vùng. Ca thật `V16 user manual` tr.11, ô
+    `Integrated Thermal Aerosol Fire Suppression Module`: nhãn chính **45 ký tự ở 9.0pt**,
+    dòng chú thích **46 ký tự ở 5.0pt** — 46 thắng 45, cả ô vẽ ở 5.0pt và nhãn chính nhỏ đi
+    44% so với nguồn. Bản đã giao trước đó ra 7.0pt chỉ vì median khi ấy đếm cả khoảng trắng
+    và rơi đúng vào giữa — ăn may, không phải luật.
+
+    Khi cụm nhì đạt ≥ `TIE_COUNT_RATIO` số ký tự của cụm nhất thì không có bên nào thắng
+    thật; lấy **cỡ LỚN HƠN** trong hai cụm. Nhãn chính là thứ mắt người đọc trước, và fitter
+    còn quyền thu nhỏ nếu không vừa — thu từ cỡ đúng xuống thì an toàn hơn là phóng từ cỡ sai
+    lên. Đo trên chính ô đó: src_size 9.0 → fit ra 8.96pt, 5 dòng, không sinh issue nào.
     """
     ink = [r["size"] for r in reg["runs"] for ch in r["text"] if ch.strip()]
-    if ink:
-        return statistics.median(ink)
-    allc = [r["size"] for r in reg["runs"] for _ in r["text"]]
-    return statistics.median(allc) if allc else reg["runs"][0]["size"]
+    if not ink:
+        allc = [r["size"] for r in reg["runs"] for _ in r["text"]]
+        return statistics.median(allc) if allc else reg["runs"][0]["size"]
+
+    by_size = collections.Counter(ink)
+    top = by_size.most_common(2)
+    if len(top) > 1 and top[1][1] >= TIE_COUNT_RATIO * top[0][1]:
+        return max(top[0][0], top[1][0])
+    return statistics.median(ink)
 
 
 def ink_base_x(reg: dict, span_x: float) -> float:

@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.42"
+  version: "1.9.43"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.42 (engine `1.9.42`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.43 (engine `1.9.43`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -165,6 +165,14 @@ metadata:
 > (`ink_base_x`, 1.8.0/1.9.9) và trục kiểu chữ (`role_style`/`role_face`, 1.9.34/1.9.35).
 > Một luật chung: span khoảng trắng có advance nhưng không vẽ gì, nên không được quyết định
 > thứ gì về hình thức của chữ thật. Vùng toàn khoảng trắng giữ nguyên hành vi cũ.
+> **1.9.43** → luật hoà phiếu giữa hai cỡ chữ THẬT. Median là thống kê sai cho vùng bimodal:
+> nó rơi về cụm đông hơn dù chỉ hơn một ký tự. Ca thật `V16 user manual` tr.11, ô
+> `Integrated Thermal Aerosol Fire Suppression Module`: nhãn chính 45 ký tự ở 9.0pt, chú thích
+> 46 ký tự ở 5.0pt → 46 thắng 45, cả ô vẽ 5.0pt, nhãn nhỏ đi 44% so với nguồn. Bản phát hành
+> trước ra 7.0pt chỉ vì median khi ấy đếm cả khoảng trắng nên rơi đúng vào giữa — ăn may, không
+> phải luật. Cụm nhì đạt ≥80% số ký tự cụm nhất thì lấy **cỡ lớn hơn**: nhãn chính là thứ mắt
+> đọc trước, và fitter còn quyền thu nhỏ nếu không vừa — thu từ cỡ đúng xuống an toàn hơn phóng
+> từ cỡ sai lên. Đo trên chính ô đó: src_size 9.0 → fit 8.96pt, 5 dòng, không sinh issue.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:
