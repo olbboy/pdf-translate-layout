@@ -1812,6 +1812,24 @@ _cjk = {"runs": [
 check("chữ CJK tính là có chữ, không mượn họ chữ chỗ khác",
       _rf(_cjk, "body")["serif"] is True)
 
+# ── ngắt dòng nằm trong placeholder (engine 1.9.37) ──────────────────────────────────
+# `\s?` của MEAS_RE khớp cả `\n`, nên số đo bị bản gốc ngắt dòng giữa chừng vào bảng tra
+# nguyên dấu xuống dòng rồi theo placeholder vào mọi bản dịch. Fitter coi giá trị là token
+# atomic nên không wrap lại được: ô nào cũng xuống dòng đúng chỗ bản gốc xuống, kể cả khi
+# khung tiếng Việt còn thừa chỗ. Ca thật: Pi Station 261 EX bảng 3.3.
+from translate_prep import unwrap_tokens as _uw
+
+_mw, _mapw = protect("Single cell 2.5V～3.65\nV", [])
+check("số đo bị ngắt dòng vẫn mask trọn thành placeholder",
+      _mw == "Single cell ⟦MEAS_1⟧～⟦MEAS_2⟧", _mw)
+check("protect giữ round-trip nguyên văn kể cả khi có ngắt dòng",
+      restore(_mw, _mapw) == "Single cell 2.5V～3.65\nV")
+check("bảng đem đi vẽ đã bỏ ngắt dòng trong số đo",
+      _uw(_mapw)["MEAS_2"] == "3.65V", str(_uw(_mapw)))
+check("nối bằng rỗng, không chèn dấu cách", _uw({"MEAS_1": "55\n°C"})["MEAS_1"] == "55°C")
+# Giá trị không có ngắt dòng phải đi qua nguyên vẹn — kể cả số đo vốn có dấu cách.
+check("số đo có dấu cách thật giữ nguyên dấu cách",
+      _uw({"MEAS_1": "50 mm", "BRAND_1": "Pytes"}) == {"MEAS_1": "50 mm", "BRAND_1": "Pytes"})
 
 print()
 if FAILURES:

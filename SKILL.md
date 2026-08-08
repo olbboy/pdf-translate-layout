@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.36"
+  version: "1.9.37"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.36 (engine `1.9.36`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.37 (engine `1.9.37`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -663,6 +663,21 @@ metadata:
 > serif giả (Arial + NotoSansHans, Rany + Arial); thứ tự role giữ nguyên, không role nào mất.
 > Không đụng layout, không đụng `region_id`/`source_hash`/bản dịch — job cũ chạy lại
 > stage 2 → 7 là hưởng, response không mồ côi.
+
+> **1.9.37** **ngắt dòng nằm trong giá trị placeholder.** `\s?` của `MEAS_RE`/`STD_RE`/
+> `MODEL_RE` khớp cả `\n`, nên một số đo bị bản gốc ngắt dòng giữa chừng đi vào bảng tra
+> nguyên cả dấu xuống dòng. Dấu đó theo placeholder vào MỌI bản dịch: fitter nhận giá trị
+> là token atomic nên không wrap lại được, và ô nào cũng xuống dòng đúng chỗ bản gốc xuống
+> — kể cả khi khung tiếng Việt còn thừa chỗ. Ca thật: Pi Station 261 EX bảng 3.3, ô ghi chú
+> rộng 141,8pt in `Cell đơn 2.5V~3.65` rồi `V` một mình xuống dòng, trong khi cả cụm chỉ
+> chiếm 96,2pt; ô nhiệt độ cùng trang gãy y hệt ở `55` / `°C`.
+> Chuẩn hoá đặt ở chỗ GHI bảng tra vào model (`unwrap_tokens`), không đặt trong `protect()`
+> — `protect()` giữ nguyên hợp đồng round-trip nguyên văn mà selftest vẫn chốt.
+> Nối bằng rỗng chứ không bằng dấu cách: ngắt dòng ở đây là nét gãy của trình bày. Đo trên
+> **1646 placeholder của 14 job**: đúng **2** giá trị có `\n`, cả hai là số dính đơn vị
+> (`runs` của region giữ nguyên `3.65V`, `55°C` liền nhau) — 0 ca cần giữ lại dấu cách.
+> **Chỉ đụng stage 3** — job cũ chạy lại stage 3 → 7 là hưởng, `region_id` và
+> `source_masked` không đổi nên `responses.jsonl` cũ dùng lại nguyên vẹn.
 
 > **1.9.36** **role suy biến** — role mà bản dịch trỏ vào không mang ký tự chữ-số NÀO trong
 > nguồn. Ca thật: ghi chú "Note：..." của V16 Lite có role `body` đúng **một dấu `：` font

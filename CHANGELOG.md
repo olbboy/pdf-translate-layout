@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.37] - 2026-08-08
+
+### Fixed
+
+- **Line break inside a placeholder value.** The `\s?` in `MEAS_RE`/`STD_RE`/`MODEL_RE`
+  matches `\n` as well, so a measurement the source happened to wrap mid-token entered the
+  lookup table carrying its line break. The break then rode the placeholder into *every*
+  translation: the fitter treats a placeholder value as one atomic token and cannot re-wrap
+  it, so the cell broke exactly where the source broke even when the Vietnamese box had room
+  to spare. Real case: Pi Station 261 EX table 3.3 — a 141.8pt note cell printed
+  `Cell đơn 2.5V~3.65` with a lone `V` on the next line while the whole phrase measures
+  96.2pt; the temperature cell on the same page broke identically at `55` / `°C`.
+
+  Normalisation sits where the table is **written into the model** (`unwrap_tokens`), not
+  inside `protect()` — `protect()` keeps its exact round-trip contract, which the selftest
+  still pins. Values are joined with nothing rather than a space: a break here is an artefact
+  of typesetting, not content. Measured over **1646 placeholders across 14 jobs**: exactly
+  **2** values contain `\n`, both a number glued to its unit (the region `runs` keep `3.65V`
+  and `55°C` unbroken) — 0 cases where a space had to be preserved.
+
+  **Stage 3 only** — re-running stages 3 → 7 is enough for an existing job; `region_id` and
+  `source_masked` are unchanged, so an existing `responses.jsonl` is reused as is.
+
 ## [1.9.36] - 2026-08-07
 
 ### Fixed

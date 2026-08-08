@@ -84,6 +84,25 @@ def restore(text: str, mapping: dict) -> str:
     return PH_RE.sub(lambda m: mapping.get(m.group(1), m.group(0)), text)
 
 
+def unwrap_tokens(mapping: dict) -> dict:
+    """Bỏ ngắt dòng NẰM TRONG giá trị placeholder trước khi ghi vào model.
+
+    `\\s?` của MEAS_RE/STD_RE/MODEL_RE khớp cả `\\n`, nên một số đo bị bản gốc ngắt dòng
+    giữa chừng đi vào bảng tra nguyên cả dấu xuống dòng. Dấu đó theo placeholder vào MỌI
+    bản dịch: fitter nhận `'3.65\\nV'` là một token atomic nên không wrap lại được, và ô
+    nào cũng xuống dòng đúng chỗ bản gốc xuống — kể cả khi khung tiếng Việt thừa chỗ.
+    Ca thật: Pi Station 261 EX bảng 3.3, `'3.65\\nV'` và `'55\\n°C'`.
+
+    Nối bằng rỗng chứ không bằng dấu cách: ngắt dòng ở đây là nét gãy của trình bày, không
+    phải khoảng trắng của nội dung. Đo trên 1646 placeholder của 14 job: đúng 2 giá trị có
+    `\\n`, cả hai đều là số dính đơn vị (`runs` của region giữ nguyên `'3.65V'`, `'55°C'`
+    liền nhau) — 0 ca cần giữ lại dấu cách.
+
+    `protect()` giữ nguyên hợp đồng round-trip nguyên văn; chuẩn hoá chỉ ở bảng đem đi vẽ.
+    """
+    return {k: v.replace("\n", "") if "\n" in v else v for k, v in mapping.items()}
+
+
 def classify_action(reg: dict, keep_terms_ci: set, mapping_len: int, masked: str) -> tuple[str, str]:
     """→ (action, keep_class). spec §5.6: translate|keep|manual (delete chỉ do reviewer)."""
     t = reg["source_text"].strip()
@@ -165,7 +184,7 @@ def prep(job: Job) -> None:
                                          page=reg["page"], region_id=reg["region_id"]))
             continue
 
-        reg["placeholders"] = mapping
+        reg["placeholders"] = unwrap_tokens(mapping)
         reg["source_masked"] = masked
 
         warnings = []
