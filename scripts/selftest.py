@@ -385,7 +385,8 @@ check("auth short source no truncation check",
 import pymupdf
 
 from _common import vertical_rules
-from extract_group import build_lines, fragment_row, ink_bbox, split_multicol_rows
+from extract_group import (build_lines, fragment_row, ink_bbox, split_multicol_rows,
+                           trace_lines)
 from fit_paint import painted_rect
 
 
@@ -484,6 +485,83 @@ check("build_lines lấy bbox theo mực, không theo advance của space đuôi
       _ink_line["bbox"][2] < _ink_raw[2] - 1.0,
       f"line={_ink_line['bbox'][2]} raw={round(_ink_raw[2], 2)}")
 _ink_doc.close()
+
+# ── trace_lines: vớt chữ rawdict bỏ sót (extract_group) ──
+# Ca thật Phocos Guide for V5 trang 2: đoạn "Plug in the battery end into the RS485 port…"
+# in ra bình thường nhưng rawdict không trả về, texttrace thấy đủ. Không line → không
+# region → stage 4 không dịch, mà G6 so pixel nguồn↔đích nên đoạn không dịch KHÔNG sinh
+# diff: im lặng tuyệt đối. Đo trước khi vá trên 44 hướng dẫn ghép biến tần: 8 file, 4.760
+# ký tự rơi kiểu này.
+def _trace_span(text: str, x0: float = 50.0, y: float = 100.0, cw: float = 6.0,
+                stype: int = 0, font: str = "ArialMT") -> dict:
+    """Span kiểu get_texttrace(): char là tuple (ucs, gid, origin, bbox)."""
+    chars, x = [], x0
+    for ch in text:
+        chars.append((ord(ch), 0, (x, y), (x, y - 8.0, x + cw, y + 2.0)))
+        x += cw
+    return {"chars": chars, "bbox": (x0, y - 8.0, x, y + 2.0), "dir": (1.0, 0.0),
+            "wmode": 0, "font": font, "size": 12.0, "flags": 0,
+            "color": (0.0, 0.0, 0.0), "type": stype, "seqno": 0}
+
+
+class _FakeTracePage:
+    def __init__(self, spans):
+        self._spans = spans
+
+    def get_texttrace(self):
+        return self._spans
+
+
+_recovered = trace_lines(_FakeTracePage([_trace_span("Plug in the battery end")]), "")
+check("trace_lines vớt được dòng rawdict bỏ sót", len(_recovered) == 1,
+      str(_recovered))
+check("... và giữ nguyên văn bản",
+      _recovered and "".join(s["text"] for s in _recovered[0]["spans"]) ==
+      "Plug in the battery end")
+# So khớp theo CHUỖI, không theo bbox: texttrace gộp span khác cách rawdict (một span của
+# nó trải hai dòng) nên so tâm bbox báo thừa hàng loạt — thử trên các bản ĐÃ GIAO KHÁCH thì
+# V16 Lite user manual bị báo 13.021 ký tự "mất" trong khi những câu đó đã dịch đủ.
+check("trace_lines không nhân đôi chữ rawdict đã có",
+      trace_lines(_FakeTracePage([_trace_span("Program the inverter")]),
+                  "Programtheinverter") == [])
+check("trace_lines bỏ qua chữ vô hình (lớp OCR, type 3)",
+      trace_lines(_FakeTracePage([_trace_span("bong ma", stype=3)]), "") == [])
+# texttrace trải một span qua hai dòng; giữ nguyên sẽ ra bbox cao bằng cả đoạn và region
+# bị thổi. Cắt theo đường chân chữ mới đúng.
+_two = trace_lines(_FakeTracePage(
+    [{"chars": _trace_span("AB", y=100.0)["chars"] + _trace_span("CD", y=120.0)["chars"],
+      "bbox": (50.0, 92.0, 62.0, 122.0), "dir": (1.0, 0.0), "wmode": 0, "font": "ArialMT",
+      "size": 12.0, "flags": 0, "color": (0.0, 0.0, 0.0), "type": 0, "seqno": 0}]), "")
+check("trace_lines cắt span trải hai dòng theo đường chân chữ", len(_two) == 2,
+      str([l["bbox"] for l in _two]))
+# Chỗ rawdict rơi ligature nó trả "BaƩery QuanƟty" còn texttrace trả "Battery Quantity":
+# khác chuỗi nên lọt vòng so chuỗi, và nếu không chặn sẽ thêm line ĐÈ lên line cũ. Đếm
+# theo ký tự nằm trong line rawdict, không theo diện tích khung — span texttrace trải
+# ngang hai cột thì khoảng hở giữa cột kéo tỷ lệ diện tích xuống dưới ngưỡng.
+_lig = _trace_span("Battery Quantity")
+check("trace_lines không chồng lên line rawdict đã phủ quá nửa ký tự",
+      trace_lines(_FakeTracePage([_lig]), "BaƩeryQuanƟty", [_lig["bbox"]]) == [])
+check("... nhưng chỉ chớm mép thì vẫn vớt",
+      len(trace_lines(_FakeTracePage([_lig]), "BaƩeryQuanƟty",
+                      [(0.0, 0.0, 60.0, 200.0)])) == 1)
+
+
+class _FakeTracePageBox(_FakeTracePage):
+    rect = pymupdf.Rect(0, 0, 595, 842)
+
+
+# Chữ ngoài khổ giấy không in ra; dịch nó chỉ đẻ region bbox âm. Ca thật: V5 Series manual
+# trang 16 có 3 ghi chú ở x0 = -402.
+check("trace_lines bỏ chữ nằm ngoài khổ giấy",
+      trace_lines(_FakeTracePageBox([_trace_span("ngoai trang", x0=-402.0)]), "") == [])
+check("... chữ trong khổ giấy vẫn vớt",
+      len(trace_lines(_FakeTracePageBox([_trace_span("trong trang", x0=50.0)]), "")) == 1)
+
+_issues_tr: list = []
+trace_lines(_FakeTracePage([_trace_span("Plug in the battery end")]), "", None,
+            _issues_tr, 3)
+check("trace_lines báo issue để reviewer biết chỗ nào là chữ vớt",
+      [i["code"] for i in _issues_tr] == ["TEXT_RECOVERED_BY_TRACE"], str(_issues_tr))
 
 # ── painted_rect: hộp mực theo góc xoay (fit_paint) ──
 LINE = {"y": 100.0, "x": 50.0, "width": 60.0,

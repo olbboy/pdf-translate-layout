@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.39"
+  version: "1.9.40"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.39 (engine `1.9.39`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.40 (engine `1.9.40`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -127,6 +127,23 @@ metadata:
 > `source_hash` bằng tay.
 > **Đổi layout model = job cũ phải re-run stage 2.** Chi phí đo được trên V16 manual: chỉ 31
 > `region_id` đổi, **0/53 sửa tay bị mồ côi**, 13 region cần dịch mới.
+> **1.9.40** → stage 2 vớt thêm chữ mà `get_text()` không trả về. `rawdict` là nguồn duy
+> nhất cho tới 1.9.39; trên `Phocos Guide for V5.pdf` trang 2 nguyên đoạn *"Plug in the
+> battery end into the RS485 port…"* in ra bình thường (cùng `ArialMT` 12pt, cùng màu, cùng
+> `opacity` 1.0, `type` 0 như đoạn ngay dưới, khác mỗi `seqno`) mà `rawdict` không có, trong
+> khi `get_texttrace()` có đủ glyph. Không line → không region → stage 4 không dịch, và
+> **không gate nào bắt được**: G6 so pixel nguồn với bản dịch, đoạn chưa dịch thì hai bên
+> giống hệt nhau nên không sinh diff. Đo trên 44 hướng dẫn ghép biến tần: **8 file, 91 dòng,
+> 4.862 ký tự**; 36 file còn lại và nguồn của mọi bản đã giao khách đều vớt 0. Dòng vớt được
+> báo `TEXT_RECOVERED_BY_TRACE` (P2) kèm số trang.
+>
+> Hai chốt chống nhân đôi, cả hai dựng SAU khi đo: so khớp theo **chuỗi** chứ không theo
+> bbox (texttrace gộp span khác cách rawdict, so tâm bbox báo thừa 13.021 ký tự trên
+> `V16 Lite user manual` vốn đã dịch đủ); và bỏ run đã được line rawdict phủ **quá nửa ký
+> tự** — chỗ rawdict rơi ligature nó trả `BaƩery QuanƟty` còn texttrace trả
+> `Battery Quantity`, khác chuỗi nên lọt vòng đầu rồi đè lên dòng cũ (`V5 Series` 10 dòng
+> trước, 0 sau). Đếm theo ký tự vì đếm theo diện tích để lọt ca span trải ngang hai cột.
+
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:
 > (1) **bbox của line tính cả space đầu/đuôi.** Space có advance nhưng không vẽ gì; ô bảng

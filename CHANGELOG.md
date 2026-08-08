@@ -4,6 +4,50 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.40] - 2026-08-08
+
+### Fixed
+
+- **Text that prints but `get_text()` never returns is no longer dropped in silence.** Stage 2
+  built lines from `rawdict` only. On `Phocos Guide for V5.pdf` page 2 the whole paragraph
+  *"Plug in the battery end into the RS485 port…"* prints normally — same `ArialMT` 12pt, same
+  black, `opacity` 1.0, `type` 0 as the paragraph right below it, differing only in `seqno` —
+  yet `rawdict` returns nothing for it while `get_texttrace()` returns every glyph.
+
+  No line meant no region, no region meant stage 4 never translated it, and **no gate could
+  catch it**: G6 diffs the source render against the translated one, and a paragraph that was
+  never touched is identical on both sides, so it produces no diff. The document would have
+  shipped with English paragraphs in the middle of Vietnamese ones.
+
+  `build_lines` now falls back to `get_texttrace()` for glyph runs `rawdict` missed, and
+  reports `TEXT_RECOVERED_BY_TRACE` (P2) naming the page so the reviewer knows which lines to
+  check against the compare PDF.
+
+  Measured across the 44 inverter integration guides: **8 files, 91 lines, 4 862 characters**
+  move from invisible to translated. The other 36 recover nothing, as do the sources of every
+  document already delivered — `V16 Lite`, `V16`, `HV48100`, `V5 Series`, and the repaired
+  `Pi Station 261 EX` source all measure 0.
+
+  Two guards were added after measuring, not before:
+
+  - **Matching is by string, not by box.** `texttrace` merges spans differently from `rawdict`
+    — one of its spans can span two visual lines — so comparing bbox centres over-reports
+    wildly: the first attempt claimed 13 021 lost characters in `V16 Lite user manual`, whose
+    text had in fact been translated in full.
+  - **A run already covered by a `rawdict` line is skipped, counted per character.** Where
+    `rawdict` drops a ligature it returns `BaƩery QuanƟty` while `texttrace` returns
+    `Battery Quantity`; the strings differ, so the string test passes it through and the new
+    line lands *on top of* the old one. Counting by area let this escape when one `texttrace`
+    span straddled two columns and the gutter dragged the ratio below the threshold.
+    `V5 Series User Manual EN V1.8` measured 10 duplicated lines / 479 characters before the
+    per-character rule, 0 after.
+
+  Glyph runs outside the page box are skipped too — that same manual carries three notes at
+  `x0 = -402`, which never print.
+
+  **Stage 2 only**, but region ids shift on any file that recovers text, so an affected job
+  re-runs from stage 2.
+
 ## [1.9.39] - 2026-08-08
 
 ### Fixed

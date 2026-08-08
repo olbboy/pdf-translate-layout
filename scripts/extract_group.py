@@ -73,7 +73,137 @@ def ink_bbox(spans: list) -> list | None:
     return union(bs) if bs else None
 
 
-def build_lines(page: pymupdf.Page) -> tuple[list, list]:
+TRACE_BLOCK = -1  # block id cho dòng vớt bằng texttrace; rawdict đánh số từ 0
+
+
+def span_from_trace_chars(chars: list, meta: dict) -> dict | None:
+    """Dựng span theo đúng khuôn `span_from_raw` từ char tuple của texttrace.
+
+    Char tuple: (ucs, glyph_id, (origin_x, origin_y), (x0, y0, x1, y1)).
+    """
+    text = "".join(chr(c[0]) for c in chars)
+    if not text:
+        return None
+    r, g, b = (meta.get("color") or (0.0, 0.0, 0.0))[:3]
+    return {
+        "text": text,
+        "origin": [round(v, 2) for v in chars[0][2]],
+        "bbox": [round(min(c[3][0] for c in chars), 2),
+                 round(min(c[3][1] for c in chars), 2),
+                 round(max(c[3][2] for c in chars), 2),
+                 round(max(c[3][3] for c in chars), 2)],
+        "size": round(meta.get("size", 0), 2),
+        "flags": meta.get("flags", 0),
+        "font": meta.get("font", ""),
+        "color": (int(r * 255) << 16) | (int(g * 255) << 8) | int(b * 255),
+        "chars": [{"c": chr(c[0]), "origin": [round(v, 2) for v in c[2]],
+                   "bbox": [round(v, 2) for v in c[3]]} for c in chars],
+    }
+
+
+TRACE_OVERLAP_MAX = 0.5  # quá nửa ký tự đã nằm trong line rawdict thì coi như đã có
+
+
+def trace_lines(page: pymupdf.Page, known: str, known_boxes: list | None = None,
+                issues: list | None = None, pno: int | None = None) -> list:
+    """Dòng chữ in ra giấy nhưng `get_text()`/`rawdict` không trả về.
+
+    Ca thật — `Phocos Guide for V5.pdf` trang 2: cả đoạn "Plug in the battery end into the
+    RS485 port…" hiện bình thường khi in, cùng ArialMT 12pt, cùng màu đen, `opacity` 1.0,
+    `type` 0 như đoạn ngay dưới nó; khác đúng một thứ là `seqno`. `rawdict` không có nó,
+    `get_texttrace()` có đủ glyph.
+
+    Vì sao phải chặn ở đây: không có line thì không có region, không region thì stage 4
+    không dịch, và **không gate nào bắt được** — G6 so pixel nguồn với bản dịch, mà đoạn
+    không dịch thì hai bên giống hệt nhau nên không sinh diff. Đo trên 44 hướng dẫn ghép
+    biến tần trước khi vá: 8 file rơi 4.760 ký tự kiểu này, im lặng hoàn toàn.
+
+    `known` là toàn bộ chữ rawdict đã thấy, đã bỏ khoảng trắng. So khớp theo CHUỖI chứ
+    không theo bbox: texttrace gộp span khác cách rawdict (một span của nó trải hai dòng),
+    nên so tâm bbox báo thừa hàng loạt — thử trên các bản đã giao khách thì V16 Lite manual
+    bị báo 13.021 ký tự "mất" trong khi những câu đó đã dịch đủ.
+    """
+    try:
+        trace = page.get_texttrace()
+    except Exception as e:  # texttrace hỏng không được chặn extraction
+        if issues is not None:
+            issues.append(make_issue("TEXT_TRACE_ERROR", "P2", STAGE, str(e)[:120], page=pno))
+        return []
+
+    boxes = [pymupdf.Rect(b) for b in (known_boxes or [])]
+    page_box = page.rect if hasattr(page, "rect") else pymupdf.Rect(-1e6, -1e6, 1e6, 1e6)
+    missing: list[tuple[list, dict]] = []
+    for sp in trace:
+        if sp.get("type") == 3:
+            continue  # chữ vô hình (lớp OCR) — không in ra, không dịch
+        chars = sp.get("chars") or []
+        text = "".join(chr(c[0]) for c in chars)
+        if not "".join(text.split()) or "".join(text.split()) in known:
+            continue
+        # Chữ nằm ngoài khổ giấy thì không in ra — dịch nó chỉ tạo region có bbox âm.
+        # `V5 Series User Manual EN V1.8` trang 16 có 3 ghi chú ở x0 = -402.
+        r = pymupdf.Rect(sp["bbox"])
+        if not (r & page_box).is_valid or abs(r & page_box) < 0.5 * max(abs(r), 1e-9):
+            continue
+        # So chuỗi thôi thì chưa đủ: chỗ rawdict rơi ligature, nó trả về "BaƩery QuanƟty"
+        # còn texttrace trả "Battery Quantity" — khác chuỗi nên lọt qua vòng trên, và
+        # thêm line mới ĐÈ LÊN line cũ, thành hai lớp chữ chồng nhau. Đo trên
+        # `V5 Series User Manual EN V1.8`: 10 dòng / 479 ký tự bị nhân đôi kiểu này.
+        #
+        # Đếm theo KÝ TỰ chứ không theo diện tích khung: ở trang 19 một span texttrace
+        # trải ngang hai cột ("Battery Quantity" và "Inverter Quantity" là hai line rawdict
+        # rời nhau), khoảng hở giữa hai cột kéo tỷ lệ diện tích xuống dưới ngưỡng và ca
+        # nhân đôi lọt qua.
+        if boxes:
+            inside = sum(1 for c in chars
+                         if any(b.contains(pymupdf.Point((c[3][0] + c[3][2]) / 2,
+                                                         (c[3][1] + c[3][3]) / 2))
+                                for b in boxes))
+            if inside / len(chars) > TRACE_OVERLAP_MAX:
+                continue
+        missing.append((chars, sp))
+    if not missing:
+        return []
+
+    # Gom char theo đường chân chữ rồi cắt span theo style — texttrace có thể trải một
+    # span qua nhiều dòng, giữ nguyên sẽ ra bbox cao bằng cả đoạn.
+    by_baseline: dict[float, list[tuple[tuple, dict]]] = {}
+    for chars, sp in missing:
+        for c in chars:
+            by_baseline.setdefault(round(c[2][1], 1), []).append((c, sp))
+
+    out = []
+    for baseline in sorted(by_baseline):
+        row = sorted(by_baseline[baseline], key=lambda cs: cs[0][2][0])
+        spans, cur, cur_meta = [], [], None
+        for c, sp in row:
+            key = (sp.get("font"), sp.get("size"), sp.get("color"), sp.get("flags"))
+            if cur_meta is not None and key != cur_meta[0]:
+                spans.append(span_from_trace_chars(cur, cur_meta[1]))
+                cur = []
+            cur.append(c)
+            cur_meta = (key, sp)
+        if cur and cur_meta:
+            spans.append(span_from_trace_chars(cur, cur_meta[1]))
+        spans = [s for s in spans if s]
+        if not spans or not "".join(s["text"] for s in spans).strip():
+            continue
+        meta = row[0][1]
+        out.append({"bbox": ink_bbox(spans) or union([s["bbox"] for s in spans]),
+                    "dir": tuple(round(v, 3) for v in meta.get("dir", (1.0, 0.0))),
+                    "wmode": meta.get("wmode", 0), "block": TRACE_BLOCK, "spans": spans})
+
+    if out and issues is not None:
+        n_chars = sum(len("".join(s["text"] for s in l["spans"]).strip()) for l in out)
+        issues.append(make_issue(
+            "TEXT_RECOVERED_BY_TRACE", "P2", STAGE,
+            f"{len(out)} dòng / {n_chars} ký tự chỉ texttrace thấy, rawdict bỏ sót — "
+            "đã đưa vào diện dịch; đối chiếu bản so sánh ở những dòng này", page=pno))
+    return out
+
+
+def build_lines(page: pymupdf.Page, issues: list | None = None,
+                pno: int | None = None) -> tuple[list, list]:
     """→ (lines, block_ids). Mỗi line: bbox, dir, wmode, block, spans[]."""
     raw = page.get_text("rawdict")
     lines, blocks = [], []
@@ -89,6 +219,13 @@ def build_lines(page: pymupdf.Page) -> tuple[list, list]:
             lines.append({"bbox": bb or [round(v, 2) for v in ln["bbox"]],
                           "dir": tuple(round(c, 3) for c in ln["dir"]),
                           "wmode": ln.get("wmode", 0), "block": bi, "spans": spans})
+
+    known = "".join("".join(s["text"] for s in l["spans"]) for l in lines)
+    known = "".join(known.split())
+    recovered = trace_lines(page, known, [l["bbox"] for l in lines], issues, pno)
+    if recovered:
+        lines += recovered
+        blocks.append(TRACE_BLOCK)
     return lines, blocks
 
 
@@ -619,7 +756,7 @@ def extract(job: Job) -> None:
             pages_regions.append([])
             continue
         page = doc[pno]
-        lines, _ = build_lines(page)
+        lines, _ = build_lines(page, issues, pno)
         if not lines:
             pages_regions.append([])
             continue
