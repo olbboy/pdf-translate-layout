@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.41] - 2026-08-09
+
+### Fixed
+
+- **A coloured band behind a heading no longer counts as an obstacle.** `expand_container`
+  refused any expansion when an obstacle overlapped the text itself. A section-title
+  highlight band *is* such an overlap — it sits behind the glyphs — so the heading could not
+  grow one point into the 432pt band it was already inside.
+
+  Measured on 15 inverter configuration guides: the `BOM LIST` title box is 90–98pt wide,
+  `DANH MỤC VẬT TƯ` needs 153.1pt at 16pt, and **all 15 returned `None`**. Six wrapped onto a
+  second line that spilled outside the coloured band; six hit `FIT_IMPOSSIBLE` and therefore
+  **kept the English source text on the customer-facing PDF** — a defect no gate reports,
+  since `FIT_IMPOSSIBLE` is one P1 among 660 font warnings in the same batch.
+
+  Tiles must be **coalesced before the test**: 5 of the 15 files export the band as 48
+  separate 8pt rectangles — three under the text (overlap → refuse) and 45 to its right
+  (side obstacle → clamp the right edge back to the glyphs). No single tile looks like a
+  backdrop. `backdrop_band` merges rectangles whose gap is ≤1pt, then accepts the merged band
+  only if it spans the text horizontally. After the fix all 15 expand to 154.1pt: one line,
+  full 16pt, inside the band.
+
+  A backdrop tile must cover ≥50% of the region height. That threshold is what separates a
+  background from a **rule drawn through the text**: a sub-1pt rule covers ~3% of the line
+  and still blocks expansion as before. Text bboxes of other regions are never treated as
+  backdrops however wide they are — expanding over them would overlap a neighbour's glyphs.
+
 ## [1.9.40] - 2026-08-08
 
 ### Fixed

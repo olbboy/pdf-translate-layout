@@ -693,6 +693,51 @@ _gr = _fp.expand_container(_r, 100.0, [], _PAGE, _MARGINS, "right")
 check("nhãn căn phải nới sang trái, giữ mép phải",
       _gr is not None and abs(_gr[0][2] - 262.0) < 0.01 and _gr[0][0] < 200.0, str(_gr))
 
+# ── dải nền sau tiêu đề mục — 1.9.41 ────────────────────────────────────
+# Ca thật: tiêu đề `BOM LIST` trên dải vàng của 15 hướng dẫn ghép biến tần. Ô chữ 98.3pt,
+# `DANH MỤC VẬT TƯ` cần 153.1pt, mà dải vàng rộng 432pt đang nằm ngay SAU chữ đó. Dải được
+# xuất thành 48 ô rời rộng 8pt: ba ô dưới chữ, 45 ô bên phải. Xét từng ô thì ô dưới chữ
+# chặn đứng phép nới còn ô bên phải kẹp mép phải về sát chữ.
+_bom = _heading((81.4, 88.6, 157.7, 111.4), (81.4, 88.6, 179.7, 121.4), src="BOM LIST")
+_tiles = [[81.4 + 8.0 * i, 90.4, 81.4 + 8.0 * (i + 1), 108.8] for i in range(54)]
+_gbom = _fp.expand_container(_bom, 153.1, _tiles, _PAGE, _MARGINS, "left")
+check("tiêu đề trên dải nền ghép từ ô rời vẫn nới được",
+      _gbom is not None and _gbom[0][2] - _gbom[0][0] >= 153.1, str(_gbom))
+check("nới không tràn khỏi dải nền",
+      _gbom is not None and _gbom[0][2] <= 81.4 + 54 * 8.0 + 0.01, str(_gbom))
+
+# Mutation: bỏ phép ghép mảnh (mỗi ô xét riêng) thì phải hỏng lại — chỉ ô rộng đúng bằng cả
+# dải mới cứu được. Đây là thứ phân biệt bản vá thật với bản vá chỉ nới thêm bừa.
+check("một ô rời không tự nó là dải nền của vùng",
+      _fp.backdrop_band(_bom["bbox"], [_tiles[0]], []) is None)
+check("ghép đủ mảnh mới thành dải bao được chữ",
+      _fp.backdrop_band(_bom["bbox"], _tiles, []) is not None)
+
+# Khe rộng hơn `BACKDROP_TILE_GAP_PT` cắt dải làm đôi → nửa trái không bao hết chữ nữa.
+_split = [t for t in _tiles if t[0] < 129.4] + [[t[0] + 6.0, t[1], t[2] + 6.0, t[3]]
+                                                for t in _tiles if t[0] >= 129.4]
+check("khe lớn cắt dải, không còn bao được chữ",
+      _fp.backdrop_band(_bom["bbox"], _split, []) is None)
+
+# Nét kẻ ngang mảnh cắt ngang chữ KHÔNG phải nền — phủ dọc quá thấp, vẫn chặn như cũ.
+_rule = [[70.0, 99.6, 300.0, 100.2]]
+check("nét kẻ mảnh cắt qua chữ vẫn chặn nới",
+      _fp.backdrop_band(_bom["bbox"], _rule, []) is None
+      and _fp.expand_container(_bom, 153.1, _rule, _PAGE, _MARGINS, "left") is None)
+
+# Chữ của region khác nằm cùng dải dọc KHÔNG được tính là nền, dù trải rộng: nới đè lên nó
+# là chồng chữ. `share_gap` giữ đúng object đó.
+_neighbour = [70.0, 88.0, 300.0, 112.0]
+check("bbox chữ hàng xóm không bao giờ là nền",
+      _fp.backdrop_band(_bom["bbox"], [_neighbour], [_neighbour]) is None)
+
+# Chữ hàng xóm ĐỨNG CẠNH vẫn chặn đúng mép giữa khe, kể cả khi có dải nền chạy qua cả hai.
+_side = [200.0, 88.6, 260.0, 111.4]
+_gside = _fp.expand_container(_bom, 153.1, _tiles + [_side], _PAGE, _MARGINS, "left",
+                              share_gap=[_side])
+check("có dải nền vẫn không lấn qua chữ hàng xóm",
+      _gside is None or _gside[0][2] <= (157.7 + 200.0) / 2 + 0.01, str(_gside))
+
 # ── context graph 1.6.0 ─────────────────────────────────────────────────
 import build_context_graph as _cg
 

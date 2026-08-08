@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.40"
+  version: "1.9.41"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.40 (engine `1.9.40`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.41 (engine `1.9.41`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -143,6 +143,18 @@ metadata:
 > tự** — chỗ rawdict rơi ligature nó trả `BaƩery QuanƟty` còn texttrace trả
 > `Battery Quantity`, khác chuỗi nên lọt vòng đầu rồi đè lên dòng cũ (`V5 Series` 10 dòng
 > trước, 0 sau). Đếm theo ký tự vì đếm theo diện tích để lọt ca span trải ngang hai cột.
+> **1.9.41** → `expand_container` nhận ra **dải nền chạy sau chữ** và thôi coi nó là vật cản.
+> Tiêu đề mục `BOM LIST` của 15 hướng dẫn ghép biến tần nằm trên dải màu rộng 432pt trong khi
+> ô chữ chỉ 90–98pt; `DANH MỤC VẬT TƯ` cần 153.1pt ở 16pt. Trước bản vá **cả 15 job đều
+> `expand_container → None`**: 6 job xuống 2 dòng lòi ra ngoài dải màu, 6 job `FIT_IMPOSSIBLE`
+> nên **giữ nguyên chữ tiếng Anh trên bản giao khách** — lỗi không cổng nào bắt, vì
+> `FIT_IMPOSSIBLE` là P1 nằm lẫn giữa 660 cảnh báo font của cùng đợt.
+> Phải GHÉP mảnh rồi mới xét: 5/15 file xuất dải màu thành **48 ô vẽ rời rộng 8pt** — ba ô
+> dưới chữ (chồng lên chữ → chặn đứng phép nới), 45 ô bên phải (kẹp mép phải về sát chữ).
+> Xét từng ô thì không ô nào là "nền". Sau vá: 15/15 nới tới 154.1pt, một dòng, đủ cỡ 16pt.
+> Mảnh nền phải phủ ≥50% chiều cao vùng chữ — ngưỡng này tách nền khỏi **nét kẻ ngang cắt qua
+> chữ** (dày <1pt, phủ ~3%, vẫn chặn như cũ). bbox chữ của region khác không bao giờ được tính
+> là nền dù trải rộng, nếu không nới sẽ đè lên hàng xóm.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:

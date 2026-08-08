@@ -440,6 +440,53 @@ def occluded_by_image(doc, pno: int, bbox: list, img_rects: list) -> bool:
     return before == after
 
 
+BACKDROP_PAD_PT = 1.0        # mép ngang: chữ thường nhô khỏi dải nền dưới 1pt
+BACKDROP_COVER = 0.5         # mảnh nền phải phủ ít nhất nửa chiều cao vùng chữ
+BACKDROP_TILE_GAP_PT = 1.0   # khe tối đa giữa hai mảnh vẫn coi là một dải liền
+
+
+def backdrop_band(b: list, obstacles: list, share_gap: list = ()) -> tuple | None:
+    """→ (x0, x1, các mảnh) của DẢI NỀN chạy sau vùng chữ `b`, hoặc None.
+
+    Nền không nhất thiết là MỘT hình. Ca thật 2026-08-09: dải vàng sau tiêu đề mục của các
+    hướng dẫn ghép biến tần được xuất thành **48 ô vẽ rời rộng 8pt** xếp liền nhau; ba ô
+    nằm dưới chữ, số còn lại nằm bên phải. Xét từng ô thì ba ô đầu "chồng lên chữ" (chặn
+    đứng phép nới) còn các ô sau "là vật cản bên phải" (kẹp mép phải về sát chữ) — cộng lại
+    là không nới được một pt nào, dù cả dải rộng 428pt đang nằm sau chính chữ đó. Phải ghép
+    các mảnh liền nhau lại rồi mới xét.
+
+    Mảnh nền: phủ dọc ít nhất `BACKDROP_COVER` chiều cao vùng chữ, và KHÔNG phải bbox chữ
+    của region khác (`share_gap` giữ đúng các object đó, so khớp theo identity). Ngưỡng phủ
+    dọc là thứ tách nền khỏi **nét kẻ ngang cắt qua chữ**: nét dày dưới 1pt phủ ~3% chiều
+    cao dòng, không đạt ngưỡng, nên vẫn chặn phép nới như trước.
+
+    Dải trả về phải BAO được bề ngang của chữ (sai số `BACKDROP_PAD_PT` mỗi mép — dải nền
+    thường bắt đầu đúng tại mép chữ, làm tròn đủ để trượt phép so chặt). Dải nào không bao
+    được thì không phải nền của vùng này, các mảnh của nó vẫn là vật cản bình thường.
+    """
+    h = b[3] - b[1]
+    if h <= 0:
+        return None
+    tiles = [ob for ob in obstacles
+             if not any(ob is s for s in share_gap)
+             and (min(ob[3], b[3]) - max(ob[1], b[1])) / h >= BACKDROP_COVER]
+    if not tiles:
+        return None
+
+    bands: list[list] = []      # [x0, x1, [mảnh…]]
+    for ob in sorted(tiles, key=lambda o: o[0]):
+        if bands and ob[0] <= bands[-1][1] + BACKDROP_TILE_GAP_PT:
+            bands[-1][1] = max(bands[-1][1], ob[2])
+            bands[-1][2].append(ob)
+        else:
+            bands.append([ob[0], ob[2], [ob]])
+
+    for x0, x1, members in bands:
+        if x0 <= b[0] + BACKDROP_PAD_PT and x1 >= b[2] - BACKDROP_PAD_PT:
+            return x0, x1, members
+    return None
+
+
 def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
                      margins: tuple[float, float], align: str,
                      share_gap: list = ()) -> tuple[list, str | None] | None:
@@ -468,8 +515,21 @@ def expand_container(reg: dict, need_w: float, obstacles: list, page_rect: list,
     b = reg["bbox"]
     y0, y1 = b[1], b[3]
     left_lim, right_lim = margins
+
+    # Dải nền chạy sau chữ (xem `backdrop_band`) không phải vật cản: nới ngang trong lòng
+    # nó không đụng thêm vào cái gì. Nó chỉ đóng vai giới hạn — chữ không nên tràn ra khỏi
+    # dải màu của chính mình.
+    band = backdrop_band(b, obstacles, share_gap)
+    skip = ()
+    if band:
+        left_lim = max(left_lim, band[0])
+        right_lim = min(right_lim, band[1])
+        skip = band[2]
+
     for ob in obstacles:
         if ob[3] <= y0 or ob[1] >= y1:      # không giao dải dọc của heading
+            continue
+        if any(ob is s for s in skip):
             continue
         # Hàng xóm là chữ dịch thì CHÍNH NÓ cũng nới được về phía mình. Chặn tới mép bbox
         # NGUỒN của nó là không đủ: cả hai đều thấy khe trống theo bbox nguồn, cả hai cùng
