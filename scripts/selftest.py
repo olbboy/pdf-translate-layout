@@ -1614,9 +1614,9 @@ check("role: đậm mở đầu nhưng sau toàn đậm thì không đổi vai",
 # ── hai kiểu chữ thật cùng role body → tách sang emphasis (1.9.44) ──────
 # Ca thật catalogue tr.53-54: mã hàng RanyLight 11pt xám + mô tả RanyMedium 13.6pt gần đen,
 # cả hai bold=False nên luật độ đậm không tách được và cả khối vẽ theo run đầu.
-def _sp2(text, size, color, x=0.0):
+def _sp2(text, size, color, x=0.0, y=10.0):
     return {"text": text, "font": "ArialMT", "size": size, "color": color, "flags": 0,
-            "origin": (x, 10.0), "bbox": (x, 0.0, x + 10.0, 10.0)}
+            "origin": (x, y), "bbox": (x, y - 10.0, x + 10.0, y)}
 
 
 check("role: hai kiểu chữ thật cùng body → nhóm nhỏ sang emphasis",
@@ -1628,6 +1628,13 @@ check("role: nhóm đông hơn giữ body (bất biến còn chỗ cho role_styl
                         _sp2("mô tả dài hơn nhiều lần", 13.6, 257)]))
 check("role: dấu chú thích mũ quá ngắn thì KHÔNG tách (giữ gộp như 1.9.21)",
       _roles([_sp2("Cycle Life", 10.0, 0), _sp2("[2]", 6.0, 0)]) == ["body", "body"])
+check("role: mã hàng ngắn nhưng CHIẾM TRỌN dòng riêng thì vẫn tách",
+      _roles([_sp2("161412101071", 11.0, 5855063, y=10.0),
+              _sp2("Standard Communication Cable, compatible with many inverters",
+                   13.6, 257, y=24.0)]) == ["emphasis", "body"])
+check("role: số chú thích đầu dòng riêng nhưng dưới 6 ký tự thì KHÔNG tách",
+      _roles([_sp2("6", 4.5, 0, y=10.0), _sp2("Local Laws và phần thân dài hơn", 9.0, 0,
+                                              y=24.0)]) == ["body", "body"])
 check("role: cùng cỡ khác màu là nhãn/trị số của bảng, không tách",
       _roles([_sp2("Nhiệt độ vận hành", 10.0, 0), _sp2("-20~55°C", 10.0, 5855063)])
       == ["body", "body"])

@@ -187,6 +187,36 @@ metadata:
 > rộng bao nhiêu; hình học vẫn là việc của Gate 4. Đo trước khi vá: **3/10943 region toàn kho
 > có container suy biến**, cả ba là vùng `keep` của chính tài liệu này. Sau vá: 2 P0 → 0,
 > không region nào đang sạch bị chuyển thành lỗi.
+> Kèm hai sửa nữa, cùng đợt:
+> (2) **`infer_alignment` nhận ra hình THỤT LỀ TREO.** Khi không mốc nào được ≥2 dòng đồng
+> thuận, luật biên độ của 1.9.8 chọn trục có biên độ nhỏ nhất — và lề phải răng cưa thường
+> hẹp hơn phần thụt lề, nên khối căn trái bị đọc thành `right`. Ca thật catalogue tr.51:
+> `Unbalanced Loads Supported` / `50% of Rated Power Each Phase`, mép trái lệch 13.7pt, mép
+> phải lệch 2.9pt → cả cụm bị đẩy sang phải trong khi ô anh em 3 dòng ngay trên vẫn `left`.
+> Nay: dòng đầu chạm đúng mép trái khung (±1pt) và mọi dòng sau lùi vào trong thì trả `left`.
+> Chỉ can thiệp khi biên độ chọn `right` — khối căn giữa thật có `vc` nhỏ nhất nên không
+> dính (tựa bìa quick guide V16 Lite, dòng 2 thụt 33.8pt trái / 27.8pt phải).
+> Đo trên 1840 vùng ≥2 dòng: 181 rơi vào luật biên độ, luật này đổi **đúng 12, toàn bộ sang
+> `left`, 0 ca oan**. Luật rộng hơn (chỉ đòi MỘT dòng bất kỳ chạm x0) đổi 47 vùng và phá hỏng
+> nhãn hình căn giữa lẫn cặp `Figure N` — đã thử, không ship.
+> (3) **`split_style_roles`: vùng toàn `body` mang HAI kiểu chữ thật thì tách nhóm nhỏ sang
+> `emphasis`.** Engine vẽ một kiểu cho mỗi role; khi trong role có hai kiểu đều là chữ thật
+> thì không đại diện nào đúng — một nửa vùng chắc chắn sai cỡ, sai màu. Ca thật catalogue
+> tr.53-54: mỗi mục phụ kiện là một region gồm mã hàng `RanyLight 11pt` xám rồi mô tả
+> `RanyMedium 13.6pt` gần đen; cả hai `bold=False` nên luật độ đậm không tách được và
+> `role_style` lấy run đầu → cả khối vẽ xám 11pt.
+> Chốt: vùng chưa có role nào khác `body`; gom theo `(cỡ, màu)` ra ĐÚNG hai nhóm; cỡ chênh
+> ≥15%; và nhóm nhì **hoặc** chiếm ≥25% ký tự **hoặc** nằm trên dòng riêng và dài ≥6 ký tự.
+> Ngả thứ hai là bắt buộc vì mã hàng 12 ký tự cạnh mô tả 130 ký tự chỉ được 8%.
+> Bỏ chốt "dòng riêng" → 115 vùng dính, phần lớn là dấu chú thích mũ mà 1.9.21 cố ý gộp;
+> bỏ chốt "≥6 ký tự" → 98 vùng, kéo theo số chú thích đầu dòng của các bản Terms of Warranty
+> **đã phát hành**. Sau đủ chốt: **30 vùng toàn kho**.
+> Nhóm ĐÔNG hơn giữ `body`, nên response cũ chỉ dùng `body` vẫn hợp lệ và vẽ y như trước;
+> phần lợi chỉ đến khi bản dịch tách run.
+> **Ba sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
+> hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
+> đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
+> Job cũ chạy lại stage 2 → 7 là hưởng.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:

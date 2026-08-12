@@ -33,6 +33,51 @@ versioning follows [SemVer](https://semver.org/).
   degenerate container, all three `keep` regions in this one document. After: 2 P0 → 0, with no
   previously-clean region turning into a failure.
 
+- **A hanging indent no longer reads as right alignment.** When no edge wins two lines'
+  agreement, 1.9.8 falls back to the smallest max-min spread — and a ragged right margin is
+  routinely narrower than the indent, so left-aligned blocks came out `right`.
+
+  Measured on catalogue page 51: `Unbalanced Loads Supported` / `50% of Rated Power Each
+  Phase` — left edges 13.7pt apart, right edges 2.9pt apart, so the whole block shifted right
+  while its three-line sibling directly above stayed `left`.
+
+  `infer_alignment` now returns `left` when the first line touches the container's left edge
+  (±1pt) and every later line sits further right. It only intervenes where the spread rule
+  picked `right`; genuinely centred blocks have the smallest centre spread and are untouched
+  (the V16 Lite quick guide cover title indents 33.8pt left and 27.8pt right on line two).
+
+  Measured across 1,840 multi-line regions: 181 reach the spread rule, this rule changes
+  **exactly 12, all to `left`, with no false positives**. A looser version — any line touching
+  x0 — changed 47 regions and broke centred figure labels and `Figure N` pairs; not shipped.
+
+- **A region carrying two genuine type styles under one role now splits them.** The engine
+  paints one style per role. Where a role holds two styles that are both real text, no single
+  representative is right and half the region is guaranteed to render at the wrong size and
+  colour.
+
+  Measured on catalogue pages 53-54, where each accessory entry is one region: a part number in
+  `RanyLight` 11pt grey followed by a description in `RanyMedium` 13.6pt near-black. Both carry
+  `bold=False`, so the weight rule could not separate them, and `role_style` took the first
+  inked run — painting the whole block grey at 11pt.
+
+  `split_style_roles()` promotes the smaller group to `emphasis` when: the region has no role
+  other than `body`; grouping by `(size, colour)` yields exactly two groups; the sizes differ by
+  ≥15%; and the minority either covers ≥25% of the inked characters, or occupies lines of its
+  own and runs to at least 6 characters. That second path is required — a 12-character part
+  number beside a 130-character description is only 8%.
+
+  Dropping the own-lines condition pulls in 115 regions, mostly the superscript markers that
+  1.9.21 deliberately folds into their host line. Dropping the 6-character floor pulls in 98,
+  including the footnote numerals of already-released Terms of Warranty documents. With both:
+  **30 regions across the corpus**.
+
+  The larger group keeps `body`, so existing single-`body` responses stay valid and paint
+  exactly as before; the benefit arrives only when the translation splits its runs.
+
+  These three changes alter `runs` and `alignment` in `regions.json` but leave `region_id` and
+  `source_hash` untouched — measured on the catalogue job: 0 ids lost, 0 gained, 0 hashes
+  changed, 3 alignment changes, 16 role-structure changes, no orphaned responses.
+
 ## [1.9.43] - 2026-08-09
 
 ### Fixed

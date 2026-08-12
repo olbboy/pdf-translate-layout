@@ -495,8 +495,9 @@ def build_runs(all_spans: list) -> list:
     return runs
 
 
-SPLIT_MIN_SHARE = 0.25   # nhóm kiểu thứ hai phải chiếm ngần này số ký tự có chữ của vùng
-SPLIT_SIZE_RATIO = 1.15  # và cỡ chữ phải chênh ngần này lần
+SPLIT_MIN_SHARE = 0.25   # nhóm kiểu thứ hai chiếm ngần này số ký tự có chữ của vùng
+SPLIT_MIN_CHARS = 6      # hoặc: nhóm nhì ở DÒNG RIÊNG và dài ít nhất ngần này ký tự
+SPLIT_SIZE_RATIO = 1.15  # cả hai ngả đều đòi cỡ chữ chênh ngần này lần
 
 
 def split_style_roles(runs: list) -> None:
@@ -517,13 +518,20 @@ def split_style_roles(runs: list) -> None:
       tách đúng, không đụng vào.
     - Gom theo `(cỡ, màu)` phải ra **đúng hai nhóm**. Ba nhóm trở lên là bảng thông số trộn
       nhiều mức, tách sẽ nham nhở.
-    - Nhóm nhì phải chiếm ≥25% số ký tự có chữ. Không có chốt này thì 115 vùng dính, phần lớn
-      là **dấu chú thích mũ** (`[1]`, `[2]` 6pt cạnh thân 10pt) và số trên trục biểu đồ —
-      những thứ engine cố ý gộp vào dòng chủ từ 1.9.21.
     - Cỡ chữ phải chênh ≥15%. Cùng cỡ khác màu là nhãn/trị số của bảng, không phải hai kiểu.
+    - Nhóm nhì phải **hoặc** chiếm ≥25% số ký tự có chữ, **hoặc** nằm trên những dòng RIÊNG
+      và dài ≥6 ký tự. Phải có ngả thứ hai vì mã hàng chỉ 12 ký tự cạnh mô tả 130 ký tự —
+      8%, dưới ngưỡng tỷ lệ — mà vẫn là một kiểu chữ thật chiếm trọn dòng đầu.
 
-    Sau bốn chốt: **22 vùng toàn kho**, tập trung đúng ở trang phụ kiện và các hàng
-    `Dimensions` trộn cỡ. Nhóm ĐÔNG hơn giữ `body` — bất biến "luôn còn một run body" và
+    Hai chốt của ngả thứ hai đều cần thiết. Bỏ "dòng riêng" thì mọi **dấu chú thích mũ**
+    dính theo (`[1]`, `[2]` 6pt cạnh thân 10pt) — thứ engine cố ý gộp vào dòng chủ từ 1.9.21:
+    115 vùng toàn kho. Bỏ "≥6 ký tự" thì dính nốt số chú thích đứng đầu dòng của các bản
+    Terms of Warranty (`1 Shanghai Pytes…`, `6 Local Laws`) — 98 vùng, phần lớn nằm trong tài
+    liệu ĐÃ PHÁT HÀNH.
+
+    Sau các chốt: **30 vùng toàn kho**, đúng ở trang phụ kiện, hàng `Dimensions` trộn cỡ và
+    tiêu đề phụ `CELL`/`PCS` của bảng chứng nhận. Nhóm ĐÔNG hơn giữ `body` — bất biến
+    "luôn còn một run body" và
     `role_style('body')` vẫn có chỗ bám, nên response cũ chỉ dùng `body` vẫn hợp lệ và vẽ ra
     y như trước; phần lợi chỉ đến khi bản dịch tách run.
     """
@@ -537,12 +545,16 @@ def split_style_roles(runs: list) -> None:
         return
     (big_k, big), (small_k, small) = sorted(
         groups.items(), key=lambda kv: -sum(len(r["text"].strip()) for r in kv[1]))
-    n_big = sum(len(r["text"].strip()) for r in big)
-    n_small = sum(len(r["text"].strip()) for r in small)
-    if n_small < SPLIT_MIN_SHARE * (n_big + n_small):
-        return
     lo, hi = sorted((big_k[0], small_k[0]))
     if lo <= 0 or hi / lo < SPLIT_SIZE_RATIO:
+        return
+    n_big = sum(len(r["text"].strip()) for r in big)
+    n_small = sum(len(r["text"].strip()) for r in small)
+    baselines = lambda rs: {round(s["origin"][1], 1) for r in rs
+                            for s in r.get("spans", [])}
+    own_lines = not (baselines(big) & baselines(small))
+    if n_small < SPLIT_MIN_SHARE * (n_big + n_small) \
+            and not (own_lines and n_small >= SPLIT_MIN_CHARS):
         return
     for r in small:
         r["role"] = "emphasis"
