@@ -389,19 +389,30 @@ def segment_anchors(reg: dict, n_seg: int) -> list[float] | None:
 
 
 def line_baselines(line_seg: list, base_y: float, leading: float,
-                   anchors: list | None) -> list[float]:
+                   anchors: list | None, strict: bool = False) -> list[float]:
     """Baseline từng dòng đã fit. Không có `anchors` thì rải liên tục như cũ.
 
     Luật neo: dòng MỞ ĐOẠN tụt xuống baseline nguồn của đoạn đó, nhưng không bao giờ lùi lên
     trên dòng trước — `max(neo, trước + leading)`. Nhờ vế `max`, đoạn dịch dài hơn nguồn thì
     tự động chảy tiếp như cũ thay vì đè lên nhau; đoạn ngắn hơn thì phần dôi ra thành khoảng
     trắng đúng chỗ bản gốc có.
+
+    `strict` bỏ vế `max` cho dòng mở đoạn: đoạn đi ĐÚNG neo của nó. Cần cho vùng XOAY, nơi
+    `reg["lines"]` do extractor sắp và KHÔNG theo thứ tự nhìn — đo trên khối CSS tr.4: neo
+    theo thứ tự đọc là 549.8 / 516.7 / 534.3 / … , tức zig-zag. Vế `max` giả định neo tăng
+    dần (đúng với text ngang, nơi thứ tự đọc trùng thứ tự nhìn); gặp dãy zig-zag nó vừa dồn
+    mỗi đoạn xuống một nấc leading — cuối cùng vượt 81pt trên ngân sách 57.6pt và cả vùng bị
+    bỏ vẽ — vừa đặt đoạn đầu vào chỗ của đoạn khác.
+    Dòng WRAP bên trong một đoạn vẫn chạy tiếp bằng leading như cũ.
     """
     ys, prev_si = [], None
     for li, si in enumerate(line_seg):
-        if li == 0:
+        new_seg = si != prev_si and anchors is not None and si < len(anchors)
+        if strict and new_seg:
+            y = anchors[si]
+        elif li == 0:
             y = base_y
-        elif anchors and si != prev_si and si < len(anchors):
+        elif new_seg:
             y = max(anchors[si], ys[-1] + leading)
         else:
             y = ys[-1] + leading
@@ -1146,22 +1157,34 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             issues.append(("FONT_FALLBACK_SUBRUN", "P2", f"{t['text'][:12]!r}: {base_key}→{k}"))
         tok_font.append(k)
 
+    # ── hệ trục của vùng XOAY (1.9.47) ────────────────────────────────────────────────
+    # Text xoay có hai trục và chúng KHÔNG phải x/y của trang:
+    #   · trục ĐỌC — chữ chạy dọc theo nó. rot 90 chạy theo −y, rot 270 theo +y.
+    #   · trục XẾP DÒNG — vuông góc, dòng kế tiếp nằm về phía chân chữ. Đo trên bản gốc
+    #     (catalogue tr.4, khối địa chỉ 3 dòng): ba dòng dùng CHUNG một `origin.y` = 404.5
+    #     (cùng điểm bắt đầu đọc) và khác nhau ở `origin.x` — 457.9 / 464.7 / 471.5, đúng
+    #     thứ tự nhìn từ trên xuống. Tức rot 90 xếp dòng theo **+x**; rot 270 đối xứng, −x.
+    #     Khớp với `ink_rect`, nơi descent của rot 90 nằm ở +x.
+    # `sgn` đưa trục xếp dòng về một chiều duy nhất (u tăng = dòng sau) để dùng lại nguyên
+    # `line_baselines` — cùng luật `max(neo, trước + leading)` như rot 0.
+    rot = reg["rotation"]
+    rot_sgn = 1.0 if rot == 90 else -1.0
+    # THỨ TỰ ĐỌC KHÔNG PHẢI THỨ TỰ NHÌN. `reg["lines"]` của vùng xoay do extractor sắp, và
+    # đo được là nó lệch: khối CSS tr.4 có x = 549.8 / 516.7 / 534.3 trong khi trên trang
+    # đọc từ 516.7 xuống. Nên dòng đầu theo chiều nhìn là `min(u)`, không phải `lines[0]`.
+    src_u = [rot_sgn * l["spans"][0]["origin"][0] for l in reg["lines"]]
+    src_read = [l["spans"][0]["origin"][1] for l in reg["lines"]]
+
     # leading nguồn (baseline-to-baseline) nếu multi-line
-    origins = [l["spans"][0]["origin"][1] for l in reg["lines"]]
+    origins = sorted(src_u) if rot in (90, 270) else \
+        [l["spans"][0]["origin"][1] for l in reg["lines"]]
     if len(origins) >= 2:
         deltas = [b - a for a, b in zip(origins, origins[1:]) if b - a > 1]
         leading_ratio = (statistics.median(deltas) / src_size) if deltas else 1.15
     else:
         leading_ratio = 1.15
     leading_ratio = max(1.02, leading_ratio)
-    # Vùng XOAY cũng ưu tiên một dòng, dù nguồn nhiều dòng: v1 không vẽ được text xoay nhiều
-    # dòng (`ROTATED_MULTILINE`, §11), nên ở đây xuống dòng không phải "bố cục kém hơn" mà là
-    # BỎ VẼ HẲN — cả vùng giữ nguyên tiếng Anh trên bản giao. Thu cỡ chữ trong giới hạn
-    # `minimum_ratio` luôn tốt hơn thế. Ca thật catalogue tr.4: `Shanghai Headquarter` →
-    # `Trụ sở chính Thượng Hải` cần 90.8pt trong dải đọc 87.8pt — thiếu 3pt mà mất cả nhãn.
-    # Không vừa nổi một dòng ngay ở sàn thì vẫn quay về luật cũ và vùng bị bỏ vẽ như trước,
-    # nên nhánh này không thể làm xấu hơn hiện trạng.
-    single_line_src = len(reg["lines"]) == 1 or reg["rotation"] in (90, 270)
+    single_line_src = len(reg["lines"]) == 1
     desc_tol_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
 
     # Ngân sách dọc đo từ BASELINE DÒNG ĐẦU xuống đáy container, không phải chiều cao
@@ -1169,16 +1192,39 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     # phần nằm trên base_y không dùng để chứa dòng nào. Đối xứng với `wrap_w = c[2] - base_x`
     # của lg-basic-3. Dùng `chh` như cũ khiến fitter tưởng còn chỗ, dòng cuối tràn xuống
     # hàng bảng bên dưới — nguồn của phần lớn G4_OUT_OF_CONTAINER.
-    avail_h = max(1.0, c[3] - base_y) if reg["rotation"] == 0 else chh
+    if rot == 0:
+        avail_h = max(1.0, c[3] - base_y)
+        base_u = base_y
+    else:
+        # Cùng công thức, đo trên trục xếp dòng: từ baseline dòng ĐẦU tới mép xa của khung.
+        # Dùng cả chiều rộng khung (`chh`) như trước 1.9.47 là tính cả phần nằm TRƯỚC dòng
+        # đầu — phần không chứa được dòng nào.
+        base_u = min(src_u)
+        far = rot_sgn * (c[2] if rot == 90 else c[0])
+        avail_h = max(1.0, far - base_u)
 
     n_seg = 1 + sum(1 for t in tokens[1:] if t.get("br"))
     seg_ind = (segment_indents(reg, base_x, n_seg)
-               if reg["rotation"] == 0 and reg["alignment"] == "left" else [0.0] * n_seg)
+               if rot == 0 and reg["alignment"] == "left" else [0.0] * n_seg)
     # Neo baseline giữ chữ khớp dấu khi dấu ĐỨNG YÊN. Vùng nào dời được dấu thì thôi neo —
     # neo mà đoạn dịch ngắn hơn nguồn sẽ để lại khoảng trắng đúng bằng phần dôi ("nhảy dòng").
     anchors = (segment_anchors(reg, n_seg)
-               if reg["rotation"] == 0 and n_seg > 1 and not reg.get("bullet_lines")
+               if rot == 0 and n_seg > 1 and not reg.get("bullet_lines")
                and cfg.get("layout", {}).get("paragraph_anchor", True) else None)
+    # Vùng xoay neo theo CẢ HAI trục, và chỉ khi số đoạn bằng số dòng nguồn (hình mẫu 1 của
+    # `segment_source_lines`). Hai lý do phải neo cả trục đọc:
+    #   · thứ tự đọc không phải thứ tự nhìn, nên rải đều từ dòng đầu sẽ đảo lộn các đoạn;
+    #   · một vùng có thể gồm nhiều DẢI đọc khác nhau — khối CSS tr.4 có ba dòng chữ bắt đầu
+    #     ở y=773.1 và ba dấu tick bắt đầu ở y=799.2. Ghim chung một điểm đọc thì tick chồng
+    #     lên chữ.
+    # Hình mẫu 2/3 suy từ mức thụt lề của text NGANG nên không dùng cho vùng xoay.
+    rot_map = segment_source_lines(reg, n_seg) if rot in (90, 270) and n_seg > 1 else None
+    rot_map = rot_map[0] if rot_map and rot_map[1] == 1 else None
+    if rot_map:
+        anchors = [src_u[i] for i in rot_map]
+    seg_read = ([src_read[i] for i in rot_map] if rot_map
+                else [base_y] * n_seg)
+    strict_anchor = bool(rot_map)
 
     def layout_at(s: float, cap_one_line: bool = False):
         widths = [pack.font(k).text_length(t["text"], fontsize=s)
@@ -1218,8 +1264,9 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         # Đo bằng CHÍNH công thức baseline mà bước vẽ dùng: neo đoạn có thể đẩy dòng cuối
         # xuống thấp hơn cách rải liên tục, fitter phải thấy đúng phần đó chứ không được đo
         # một đằng vẽ một nẻo.
-        ys = line_baselines(line_seg, base_y, leading_ratio * s, anchors)
-        if ys[-1] - base_y > budget:
+        ys = line_baselines(line_seg, base_u, leading_ratio * s, anchors, strict_anchor)
+        # `max` chứ không phải `ys[-1]`: ở chế độ strict dãy baseline không đơn điệu.
+        if max(ys) - base_u > budget:
             return None
         return {"lines": lines, "widths": widths, "space_ws": space_ws,
                 "line_seg": line_seg}
@@ -1319,13 +1366,6 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             else:
                 c, cw, wrap_w, avail_h, align, best, s_fit = keep
     if best is None:
-        # Vùng xoay có ngắt dòng cứng thì nguyên nhân là giới hạn v1, không phải thiếu chỗ:
-        # từ 1.9.44 vùng xoay chỉ nhận bố cục MỘT dòng, nên bản dịch nhiều đoạn không có cỡ
-        # chữ nào hợp lệ. Báo `FIT_IMPOSSIBLE` ở đây gửi người duyệt đi tìm nhầm hướng — họ
-        # sẽ thử rút ngắn chữ, trong khi thứ chặn là số ĐOẠN chứ không phải bề rộng.
-        if reg["rotation"] in (90, 270) and any(t.get("br") for t in tokens):
-            return None, issues + [("ROTATED_MULTILINE", "P1",
-                                    "text xoay nhiều dòng chưa hỗ trợ v1 — needs review")]
         return None, issues + [("FIT_IMPOSSIBLE", "P1",
                                 f"không fit được trong container ngay tại floor "
                                 f"{cfg['fonts']['minimum_ratio']:.0%} (src {src_size}pt)")]
@@ -1357,25 +1397,31 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
 
     # dựng line segments với alignment + sub-run theo font
     leading = leading_ratio * s_fit
-    baselines = line_baselines(best.get("line_seg") or [0] * len(best["lines"]),
-                               base_y, leading, anchors)
+    best_seg = best.get("line_seg") or [0] * len(best["lines"])
+    baselines = line_baselines(best_seg, base_u, leading, anchors, strict_anchor)
     out_lines = []
     for li, idxs in enumerate(best["lines"]):
         # Bề rộng dòng = tổng token + các khe THẬT giữa chúng (khe sau token idxs[k]).
         lw = (sum(best["widths"][i] for i in idxs)
               + sum(best["space_ws"][i] for i in idxs[:-1]))
-        if align == "center":
-            x = c[0] + (cw - lw) / 2 if reg["rotation"] == 0 else base_x
+        if rot in (90, 270):
+            # Trục xếp dòng ↔ x, trục đọc ↔ y. `baselines` chạy trong hệ u nên đổi dấu về x.
+            # Điểm bắt đầu đọc lấy theo ĐOẠN, không dùng chung một `base_y`: một vùng có thể
+            # gồm nhiều dải đọc (chữ và dấu tick của khối CSS tr.4 cách nhau 26pt).
+            x = rot_sgn * baselines[li]
+            si = best_seg[li] if li < len(best_seg) else 0
+            y = seg_read[si] if si < len(seg_read) else base_y
+        elif align == "center":
+            x = c[0] + (cw - lw) / 2
+            y = baselines[li]
         elif align == "right":
-            x = c[2] - lw if reg["rotation"] == 0 else base_x
+            x = c[2] - lw
+            y = baselines[li]
         else:
-            ind = 0.0
-            if reg["rotation"] == 0:
-                seg_of = best.get("line_seg") or []
-                if li < len(seg_of) and seg_of[li] < len(seg_ind):
-                    ind = seg_ind[seg_of[li]]
+            seg_of = best_seg
+            ind = seg_ind[seg_of[li]] if li < len(seg_of) and seg_of[li] < len(seg_ind) else 0.0
             x = base_x + ind
-        y = baselines[li]
+            y = baselines[li]
         segs, cx = [], x
         cur = None
         for pos, i in enumerate(idxs):
@@ -1395,9 +1441,6 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         out_lines.append({"y": round(y, 2), "x": round(x, 2), "width": round(lw, 2),
                           "segments": [{k2: (round(v, 2) if isinstance(v, float) else v)
                                         for k2, v in s2.items()} for s2 in segs]})
-    if reg["rotation"] in (90, 270) and len(out_lines) > 1:
-        return None, issues + [("ROTATED_MULTILINE", "P1",
-                                "text xoay nhiều dòng chưa hỗ trợ v1 — needs review")]
     return {"size": round(s_fit, 2), "src_size": round(src_size, 2),
             "ratio": round(ratio, 4), "leading": round(leading, 2),
             "alignment": align, "rotation": reg["rotation"],

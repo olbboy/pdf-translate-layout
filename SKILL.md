@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.46"
+  version: "1.9.47"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.46 (engine `1.9.46`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.47 (engine `1.9.47`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -257,6 +257,33 @@ metadata:
 > dịch nhiều đoạn không còn cỡ chữ nào hợp lệ và rơi ra `FIT_IMPOSSIBLE` — gửi người duyệt đi
 > rút ngắn chữ trong khi thứ chặn là số ĐOẠN. Nay vùng xoay có ngắt dòng cứng báo đúng
 > `ROTATED_MULTILINE`. Đo trên job: 2 vùng đổi nhãn, không vùng nào đổi kết quả vẽ.
+> **1.9.47** → **vẽ được text XOAY NHIỀU DÒNG**, gỡ giới hạn v1 đứng từ đầu (§11). Trước đó
+> vùng xoay quá một dòng bị bỏ vẽ hẳn — cả vùng giữ nguyên tiếng gốc trên bản giao.
+> Text xoay có hai trục và chúng KHÔNG phải x/y của trang: trục **đọc** (rot 90 chạy theo −y,
+> rot 270 theo +y) và trục **xếp dòng** vuông góc với nó. Đo trên bản gốc — catalogue tr.4,
+> khối địa chỉ 3 dòng: ba dòng dùng CHUNG một `origin.y` = 404.5 và khác nhau ở `origin.x`
+> (457.9 / 464.7 / 471.5, đúng thứ tự nhìn từ trên xuống). Tức rot 90 xếp dòng theo **+x**,
+> khớp với `ink_rect` nơi descent của rot 90 nằm ở +x. `rot_sgn` đưa trục xếp dòng về một
+> chiều duy nhất để dùng lại nguyên `line_baselines`.
+> **Hai cái bẫy, cả hai đều đo được:**
+> (1) **Thứ tự đọc KHÔNG phải thứ tự nhìn.** `reg["lines"]` của vùng xoay do extractor sắp và
+> nó lệch — khối CSS tr.4 có u = 549.8 / 516.7 / 534.3 trong khi trên trang đọc từ 516.7
+> xuống. Nên dòng đầu theo chiều nhìn là `min(u)`, không phải `lines[0]`.
+> (2) Vì dãy neo zig-zag, luật `max(neo, trước + leading)` của 1.9.20 — vốn đúng cho text
+> ngang, nơi thứ tự đọc trùng thứ tự nhìn — vừa dồn mỗi đoạn xuống một nấc leading (khối CSS
+> vượt **81pt trên ngân sách 57.6pt**, bỏ vẽ cả vùng) vừa đặt đoạn đầu vào chỗ của đoạn khác.
+> Nay vùng xoay dùng **neo CHẶT**: đoạn đi đúng neo của nó, chỉ dòng WRAP bên trong một đoạn
+> mới chạy tiếp bằng leading. Ngân sách đo bằng `max(ys)` vì dãy baseline không còn đơn điệu.
+> Neo cả **hai trục**, không chỉ trục xếp dòng: một vùng có thể gồm nhiều DẢI đọc khác nhau —
+> khối CSS có ba dòng chữ bắt đầu ở y=773.1 và ba dấu tick ở y=799.2; ghim chung một điểm đọc
+> thì tick chồng lên chữ. Chỉ neo khi số đoạn bằng số dòng nguồn (hình mẫu 1 của
+> `segment_source_lines`); hình mẫu 2/3 suy từ mức thụt lề của text NGANG nên không dùng.
+> Kèm theo: bỏ luật ép một dòng của 1.9.44 (nguồn hai dòng thì bản dịch cũng hai dòng, khớp
+> bản gốc hơn) và bỏ luôn mã `ROTATED_MULTILINE`.
+> Đo trên job catalogue: **bỏ vẽ 14 → 6 vùng**, 8 vùng xoay nhiều dòng của trang 4 vẽ được
+> hết (6 khối địa chỉ + khối CSS + nhãn trục biểu đồ tr.36), **0 P0, 0 cờ hình học trên vùng
+> xoay**. Vùng xoay MỘT dòng không đổi một nét nào: `n_seg == 1` nên không có ánh xạ, neo
+> chặt tắt, `base_u` = u của chính dòng đó.
 > **Sáu sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
 > hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
 > đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
@@ -1131,7 +1158,8 @@ pdf-translate-layout/
 
 - Painting qua `insert_text` per-segment (không dùng `insert_htmlbox`); justified
   alignment chưa hỗ trợ — map về left/center/right.
-- Rotation: 0/90/180/270; rotated **multi-line** → P1 review, không tự paint.
+- Rotation: 0/90/180/270, kể cả **nhiều dòng** (từ 1.9.47). Góc bất kỳ (không phải bội
+  của 90°) vẫn → P1 review, không tự paint.
 - `reuse_source_font: false` — luôn map sang Noto bundle (nhánh conservative §7.3);
   display font → P1 `FONT_DISPLAY_FALLBACK` cho reviewer xác nhận.
 - Ký hiệu: `NotoSansSymbols2-Regular` đã bundle từ 1.9.46 (✓ ✔ ✗ ▪ • ○ ◇ …). CJK fallback

@@ -4,6 +4,54 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.47] - 2026-08-12
+
+### Added
+
+- **Rotated multi-line text is painted.** This lifts a v1 limitation that stood from the
+  beginning: a rotated region of more than one line was dropped entirely, leaving the whole
+  region in the source language on the delivered file.
+
+  Rotated text has two axes and neither is the page's x or y: the **reading** axis (rot 90 runs
+  along −y, rot 270 along +y) and the **line-stacking** axis perpendicular to it. Measured on
+  the source — catalogue page 4, a three-line address block: all three lines share one
+  `origin.y` of 404.5 and differ in `origin.x` (457.9 / 464.7 / 471.5, in visual top-to-bottom
+  order). So rot 90 stacks along **+x**, which agrees with `ink_rect`, where the rot-90 descent
+  sits at +x. A sign factor folds the stacking axis into a single direction so `line_baselines`
+  can be reused unchanged.
+
+  Two traps, both measured:
+
+  1. **Reading order is not visual order.** A rotated region's `reg["lines"]` comes in extractor
+     order, and it diverges: the page-4 CSS block gives u = 549.8 / 516.7 / 534.3 while the page
+     reads downward from 516.7. The first visual line is therefore `min(u)`, not `lines[0]`.
+  2. Because the anchor sequence zig-zags, the `max(anchor, previous + leading)` rule from
+     1.9.20 — correct for horizontal text, where reading order and visual order agree — both
+     pushed every paragraph down by one leading step (the CSS block overshot its 57.6pt budget
+     by 81pt and the region was dropped) and placed the first paragraph in another paragraph's
+     slot.
+
+  Rotated regions now use **strict anchoring**: a paragraph lands exactly on its anchor, and
+  only wrapped continuation lines within a paragraph advance by leading. The budget check uses
+  `max(ys)` since the baseline sequence is no longer monotonic.
+
+  Anchoring covers **both** axes, not just line stacking: a region can span several reading
+  bands — the CSS block has three text lines starting at y=773.1 and three tick marks at
+  y=799.2, so pinning one shared reading origin would stack the ticks on top of the text.
+  Anchors apply only when the paragraph count equals the source line count (pattern 1 of
+  `segment_source_lines`); patterns 2 and 3 infer from the indentation of horizontal text and
+  do not transfer.
+
+  The 1.9.44 single-line preference for rotated regions is withdrawn along with the
+  `ROTATED_MULTILINE` code: a two-line source now yields a two-line translation, closer to the
+  original.
+
+  Measured on the catalogue job: **skipped regions 14 → 6**, with all eight rotated multi-line
+  regions now painted (six address blocks, the CSS block, and a chart axis label on page 36),
+  0 P0s and no geometry flags on any rotated region. Single-line rotated regions are untouched:
+  with one paragraph there is no mapping, strict anchoring stays off, and `base_u` is that
+  line's own u.
+
 ## [1.9.46] - 2026-08-12
 
 ### Added

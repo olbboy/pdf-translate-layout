@@ -1463,14 +1463,37 @@ check("căn lề: khối căn giữa thật (biên độ chọn center) không d
       _eg.infer_alignment([_ln(74.9, 344.7), _ln(108.7, 316.9)],
                           [74.9, 0.0, 413.5, 100.0]) == "center")
 
-# ── vùng xoay ưu tiên một dòng (1.9.44) ────────────────────────────────
-# Xuống dòng ở vùng xoay không phải "bố cục kém hơn" mà là BỎ VẼ HẲN (ROTATED_MULTILINE,
-# §11), nên thu cỡ chữ trong giới hạn luôn tốt hơn. Bất biến nằm trong `fit_region` — hàm
-# đọc cả region dict nên không gọi thuần được; soi thẳng mã nguồn như test thứ tự approve.py.
+# ── vùng xoay vẽ được nhiều dòng (1.9.47) ──────────────────────────────
+# 1.9.44 ép vùng xoay về một dòng vì v1 chưa vẽ được nhiều dòng; 1.9.47 vẽ được nên bỏ ép —
+# nguồn hai dòng thì bản dịch cũng hai dòng, khớp bản gốc hơn.
 _fpsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "fit_paint.py"),
               encoding="utf-8").read()
-check("fit: single_line_src bao gồm cả vùng xoay 90/270",
-      'single_line_src = len(reg["lines"]) == 1 or reg["rotation"] in (90, 270)' in _fpsrc)
+check("fit: hết ép vùng xoay về một dòng",
+      'single_line_src = len(reg["lines"]) == 1\n' in _fpsrc)
+check("fit: hết từ chối vùng xoay nhiều dòng",
+      "ROTATED_MULTILINE" not in _fpsrc)
+
+# Neo CHẶT: đoạn đi đúng neo của nó. Dãy neo của vùng xoay zig-zag vì `reg["lines"]` theo
+# thứ tự ĐỌC chứ không theo thứ tự nhìn — ca thật khối CSS tr.4: u = 549.8 / 516.7 / 534.3.
+_ZZ = [549.8, 516.7, 534.3]
+check("neo chặt: mỗi đoạn đi đúng neo, kể cả khi dãy neo zig-zag",
+      _fp.line_baselines([0, 1, 2], 516.7, 16.2, _ZZ, True) == _ZZ)
+check("neo chặt: dòng WRAP trong một đoạn vẫn chạy tiếp bằng leading",
+      _fp.line_baselines([0, 0, 1], 516.7, 16.0, [516.7, 534.3], True)
+      == [516.7, 532.7, 534.3])
+check("neo thường (rot 0) vẫn giữ luật max — dãy neo lùi không kéo dòng lên trên",
+      [round(v, 1) for v in _fp.line_baselines([0, 1, 2], 516.7, 16.2, _ZZ, False)]
+      == [516.7, 532.9, 549.1])
+check("neo chặt: không neo thì cả hai chế độ rải liên tục như nhau",
+      _fp.line_baselines([0, 0, 0], 10.0, 5.0, None, True)
+      == _fp.line_baselines([0, 0, 0], 10.0, 5.0, None, False) == [10.0, 15.0, 20.0])
+# Bất biến nối dây: `fit_region` phải BẬT neo chặt đúng khi có ánh xạ đoạn↔dòng của vùng
+# xoay, và phải truyền cờ đó vào cả hai chỗ gọi `line_baselines` (một chỗ để ĐO trong vòng
+# tìm cỡ chữ, một chỗ để VẼ). Đo một đằng vẽ một nẻo là lỗi đã sập ở 1.9.20.
+check("fit: neo chặt bật theo ánh xạ đoạn↔dòng của vùng xoay",
+      "strict_anchor = bool(rot_map)" in _fpsrc)
+check("fit: cả hai chỗ gọi line_baselines đều truyền neo chặt",
+      _fpsrc.count("anchors, strict_anchor)") == 2)
 
 # ── sàn cỡ chữ vùng xoay: fitter và gate phải đọc CÙNG một con số (1.9.45) ──────
 # Lệch nhau thì fitter thu đúng luật mà Gate 4 tự bắn G4_RATIO_FLOOR — P0 không waive được.
