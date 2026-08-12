@@ -1463,6 +1463,15 @@ check("căn lề: khối căn giữa thật (biên độ chọn center) không d
       _eg.infer_alignment([_ln(74.9, 344.7), _ln(108.7, 316.9)],
                           [74.9, 0.0, 413.5, 100.0]) == "center")
 
+# ── vùng xoay ưu tiên một dòng (1.9.44) ────────────────────────────────
+# Xuống dòng ở vùng xoay không phải "bố cục kém hơn" mà là BỎ VẼ HẲN (ROTATED_MULTILINE,
+# §11), nên thu cỡ chữ trong giới hạn luôn tốt hơn. Bất biến nằm trong `fit_region` — hàm
+# đọc cả region dict nên không gọi thuần được; soi thẳng mã nguồn như test thứ tự approve.py.
+_fpsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "fit_paint.py"),
+              encoding="utf-8").read()
+check("fit: single_line_src bao gồm cả vùng xoay 90/270",
+      'single_line_src = len(reg["lines"]) == 1 or reg["rotation"] in (90, 270)' in _fpsrc)
+
 # ── điểm vẽ thật = mép mực, không phải origin có đệm space (1.9.16) ─────
 # `ink_base_x` của stage 6 nâng base_x lên mép mực từ 1.9.6/1.9.9; stage 2 vẫn trả origin
 # thô nên container ô bảng bị kéo sang trái đúng bề rộng dãy space. Ca thật V5: ô `CANH`

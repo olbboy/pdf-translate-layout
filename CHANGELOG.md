@@ -74,7 +74,19 @@ versioning follows [SemVer](https://semver.org/).
   The larger group keeps `body`, so existing single-`body` responses stay valid and paint
   exactly as before; the benefit arrives only when the translation splits its runs.
 
-  These three changes alter `runs` and `alignment` in `regions.json` but leave `region_id` and
+- **Rotated regions now prefer a single line even when the source has several.** For rotated
+  text, wrapping is not a worse layout — it is no layout at all: v1 cannot paint rotated
+  multi-line regions (`ROTATED_MULTILINE`, §11), so the whole region stays in the source
+  language on the delivered file. Shrinking within `minimum_ratio` always beats that.
+
+  Measured on catalogue page 4: `Shanghai Headquarter` → `Trụ sở chính Thượng Hải` needs
+  90.8pt in an 87.8pt reading span — 3pt short, and the entire label was lost;
+  `North American Marketing Center` fell 6.3pt short. Skipped regions on that page: **9 → 7**.
+
+  When a single line will not fit even at the floor, the old path still applies and the region
+  is skipped exactly as before, so this branch cannot make matters worse.
+
+  These four changes alter `runs` and `alignment` in `regions.json` but leave `region_id` and
   `source_hash` untouched — measured on the catalogue job: 0 ids lost, 0 gained, 0 hashes
   changed, 3 alignment changes, 16 role-structure changes, no orphaned responses.
 

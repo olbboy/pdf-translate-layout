@@ -213,7 +213,14 @@ metadata:
 > **đã phát hành**. Sau đủ chốt: **30 vùng toàn kho**.
 > Nhóm ĐÔNG hơn giữ `body`, nên response cũ chỉ dùng `body` vẫn hợp lệ và vẽ y như trước;
 > phần lợi chỉ đến khi bản dịch tách run.
-> **Ba sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
+> (4) **Vùng XOAY ưu tiên một dòng**, dù nguồn nhiều dòng. Với vùng xoay, xuống dòng không
+> phải "bố cục kém hơn" mà là **bỏ vẽ hẳn** (`ROTATED_MULTILINE`, §11) — cả vùng giữ tiếng
+> Anh trên bản giao. Thu cỡ chữ trong giới hạn `minimum_ratio` luôn tốt hơn thế. Ca thật
+> catalogue tr.4: `Shanghai Headquarter` → `Trụ sở chính Thượng Hải` cần 90.8pt trong dải đọc
+> 87.8pt — thiếu 3pt mà mất cả nhãn; `North American Marketing Center` thiếu 6.3pt. Không vừa
+> nổi một dòng ngay ở sàn thì vẫn quay về luật cũ, nên nhánh này không thể làm xấu hơn hiện
+> trạng. Đo trên trang 4: bỏ vẽ **9 → 7 vùng**, hai nhãn bản đồ được cứu.
+> **Bốn sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
 > hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
 > đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
 > Job cũ chạy lại stage 2 → 7 là hưởng.

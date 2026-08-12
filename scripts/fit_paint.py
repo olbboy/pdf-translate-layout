@@ -1147,7 +1147,14 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
     else:
         leading_ratio = 1.15
     leading_ratio = max(1.02, leading_ratio)
-    single_line_src = len(reg["lines"]) == 1
+    # Vùng XOAY cũng ưu tiên một dòng, dù nguồn nhiều dòng: v1 không vẽ được text xoay nhiều
+    # dòng (`ROTATED_MULTILINE`, §11), nên ở đây xuống dòng không phải "bố cục kém hơn" mà là
+    # BỎ VẼ HẲN — cả vùng giữ nguyên tiếng Anh trên bản giao. Thu cỡ chữ trong giới hạn
+    # `minimum_ratio` luôn tốt hơn thế. Ca thật catalogue tr.4: `Shanghai Headquarter` →
+    # `Trụ sở chính Thượng Hải` cần 90.8pt trong dải đọc 87.8pt — thiếu 3pt mà mất cả nhãn.
+    # Không vừa nổi một dòng ngay ở sàn thì vẫn quay về luật cũ và vùng bị bỏ vẽ như trước,
+    # nên nhánh này không thể làm xấu hơn hiện trạng.
+    single_line_src = len(reg["lines"]) == 1 or reg["rotation"] in (90, 270)
     desc_tol_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
 
     # Ngân sách dọc đo từ BASELINE DÒNG ĐẦU xuống đáy container, không phải chiều cao
