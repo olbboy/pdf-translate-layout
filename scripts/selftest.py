@@ -1472,6 +1472,30 @@ _fpsrc = open(os.path.join(os.path.dirname(ASSETS_DIR), "scripts", "fit_paint.py
 check("fit: single_line_src bao gồm cả vùng xoay 90/270",
       'single_line_src = len(reg["lines"]) == 1 or reg["rotation"] in (90, 270)' in _fpsrc)
 
+# ── sàn cỡ chữ vùng xoay: fitter và gate phải đọc CÙNG một con số (1.9.45) ──────
+# Lệch nhau thì fitter thu đúng luật mà Gate 4 tự bắn G4_RATIO_FLOOR — P0 không waive được.
+# Job đóng băng config trước 1.9.45 không có khoá `rotated_ink_floor`, nên cả hai bên rơi về
+# hằng số chung; hai default khác nhau là đúng cái bẫy đó.
+from _common import ROTATED_INK_FLOOR_DEFAULT as _RIF  # noqa: E402
+check("sàn xoay: fit_paint và qa_gates dùng chung hằng số của _common",
+      f'cfg["fonts"].get("rotated_ink_floor", ROTATED_INK_FLOOR_DEFAULT)' in _fpsrc
+      and 'cfg["fonts"].get("rotated_ink_floor", ROTATED_INK_FLOOR_DEFAULT)' in _qgsrc)
+check("sàn xoay: hằng số nằm dưới minimum_ratio (có nới thật)",
+      _RIF < 0.85)
+
+# ── is_bold_font: TÊN quyết định, cờ chỉ dùng khi tên câm (1.9.45) ──────
+from _common import is_bold_font as _ibf  # noqa: E402
+check("bold: RanyMedium là nấc nặng dù cờ khai False",
+      _ibf("RanyMedium", 0) is True)
+check("bold: RanyLight không đậm dù cờ khai True",
+      _ibf("RanyLight", 16) is False)
+check("bold: RanyBold vẫn đậm",
+      _ibf("RanyBold", 0) is True)
+check("bold: tên câm thì NGHE CỜ — font subset tự sinh khai đúng",
+      _ibf("CIDFont+F1", 16) is True and _ibf("CIDFont+F1", 0) is False)
+check("bold: tiền tố subset 6 chữ hoa không che được tên",
+      _ibf("ABCDEF+RanyMedium", 0) is True)
+
 # ── điểm vẽ thật = mép mực, không phải origin có đệm space (1.9.16) ─────
 # `ink_base_x` của stage 6 nâng base_x lên mép mực từ 1.9.6/1.9.9; stage 2 vẫn trả origin
 # thô nên container ô bảng bị kéo sang trái đúng bề rộng dãy space. Ca thật V5: ô `CANH`
@@ -1653,6 +1677,19 @@ check("role: ba nhóm kiểu trở lên thì không tách (bảng trộn nhiều
 check("role: vùng đã có emphasis do độ đậm thì luật cỡ chữ không đụng vào",
       _roles([_span("Danger", True), _sp2("thân bài dài hơn hẳn", 13.6, 257)])
       == ["emphasis", "body"])
+
+
+def _spf(text, font, flags=0):
+    return {"text": text, "font": font, "size": 12.0, "color": 0, "flags": flags,
+            "origin": (0.0, 10.0), "bbox": (0.0, 0.0, 10.0, 10.0)}
+
+
+# Bất biến nối dây: `style_of` phải gọi `is_bold_font`, không đọc thẳng cờ. Test hàm thuần ở
+# khối 1.9.45 không phát hiện được chỗ nối này — đo bằng đột biến: đổi về cờ thì test kia vẫn
+# xanh, chỉ test này đỏ.
+check("role: style_of dùng is_bold_font (RanyMedium cờ False vẫn thành emphasis)",
+      _roles([_spf("Mô tả phụ kiện", "RanyMedium"),
+              _spf("mã hàng", "RanyLight")]) == ["emphasis", "body"])
 
 # ── base_x theo nét mực, không theo origin có đệm space (1.9.6) ─────────
 # Bản gốc căn chữ bằng dãy space; space có advance nhưng không vẽ gì, còn tokenize thì bỏ

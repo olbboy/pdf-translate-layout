@@ -17,7 +17,8 @@ import numpy as np
 import pymupdf
 from PIL import Image, ImageDraw
 
-from _common import (CONTAINER_TOL_PT_DEFAULT, CONTAINER_TOL_Y_EM_DEFAULT, BlockingError, Job,
+from _common import (CONTAINER_TOL_PT_DEFAULT, CONTAINER_TOL_Y_EM_DEFAULT,
+                     ROTATED_INK_FLOOR_DEFAULT, BlockingError, Job,
                      authenticity_cfg, authenticity_check, exit_blocking, load_glossary,
                      load_json, make_issue, save_json, utc_now, refuse_if_released,
                      vertical_rules)
@@ -265,8 +266,13 @@ def run_gates(job: Job) -> None:
     floor = cfg["fonts"]["minimum_ratio"]
     tol_pt = cfg["qa"].get("container_tol_pt", CONTAINER_TOL_PT_DEFAULT)
     tol_y_em = cfg["qa"].get("container_tol_y_em", CONTAINER_TOL_Y_EM_DEFAULT)
+    # Vùng XOAY có sàn riêng: `fit_paint` được phép thu tới `rotated_ink_floor` để nhãn không
+    # tràn khỏi vệt mực nguồn (1.9.45). Gate phải đo bằng ĐÚNG cái sàn mà fitter được phép
+    # dùng — dùng sàn chung thì mọi nhãn xoay đã thu đúng luật đều thành P0 không waive được.
+    rot_floor = cfg["fonts"].get("rotated_ink_floor", ROTATED_INK_FLOOR_DEFAULT)
     for pr in painted:
-        if pr["ratio"] < floor - 1e-6:
+        pr_floor = rot_floor if pr.get("rotation") in (90, 270) else floor
+        if pr["ratio"] < pr_floor - 1e-6:
             g4_fail += 1
             gi("G4_RATIO_FLOOR", "P0", f"ratio {pr['ratio']:.2%} dưới hard floor",
                page=pr["page"], region_id=pr["region_id"])

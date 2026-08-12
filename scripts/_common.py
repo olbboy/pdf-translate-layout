@@ -17,7 +17,7 @@ import unicodedata
 import pymupdf
 import yaml
 
-ENGINE_VERSION = "1.9.44"
+ENGINE_VERSION = "1.9.45"
 # Mốc trước: lg-basic-3 tách hàng bảng gõ liền theo lưới cột logic; lg-basic-4 thêm gộp
 # cross-block các dòng cùng đoạn.
 # lg-basic-5: bbox của line chỉ tính ký tự CÓ MỰC, và hàng đa cột được tách tại MỌI khe
@@ -42,6 +42,11 @@ def layout_model_for(cfg: dict) -> str:
 # Config `qa.container_tol_*` override; hằng này là default cho job cũ thiếu key.
 CONTAINER_TOL_PT_DEFAULT = 1.5
 CONTAINER_TOL_Y_EM_DEFAULT = 0.6
+# Sàn cỡ chữ riêng cho vùng XOAY (1.9.45). Phải dùng CHUNG giữa `fit_paint` và `qa_gates`:
+# fitter thu tới sàn nào thì gate phải chấm theo đúng sàn đó, nếu không mọi nhãn xoay thu
+# đúng luật đều thành `G4_RATIO_FLOOR` — P0 không waive được. Job đóng băng config trước
+# 1.9.45 không có khoá này nên cả hai bên đều rơi về hằng số này.
+ROTATED_INK_FLOOR_DEFAULT = 0.80
 
 
 def vertical_rules(page: pymupdf.Page, tol: float = 0.8) -> list:
@@ -171,6 +176,35 @@ def is_serif_font(name: str, flags: int = 0) -> bool:
     if any(k in n for k in SANS_NAME_HINTS):
         return False
     return any(k in n for k in SERIF_NAME_HINTS)
+
+
+BOLD_NAME_HINTS = ("bold", "black", "heavy", "semibold", "demibold", "medium")
+REGULAR_NAME_HINTS = ("light", "thin", "regular", "book", "roman")
+
+
+def is_bold_font(name: str, flags: int = 0) -> bool:
+    """Chữ đậm hay không: TÊN font nói trước, cờ của PDF chỉ dùng khi tên câm.
+
+    Cùng lý lẽ `is_serif_font` (1.9.33): cờ là thứ bộ sinh PDF tự khai và nó nói dối. Ca thật
+    catalogue trang 53-54: `RanyMedium` khai `bold=False` trong khi mắt thấy rõ nó nặng hơn
+    `RanyLight`/`RanyRegular` của cùng họ — nên phần MÔ TẢ phụ kiện vẽ ra mảnh y như mã hàng,
+    mất hẳn tương phản mà bản gốc dựng.
+
+    Khác `is_serif_font` ở một chỗ: tên KHÔNG có dấu hiệu trọng lượng thì **trả về cờ**, không
+    trả mặc định. Font subset tên tự sinh (`CIDFont+F1`) không nói gì về trọng lượng, mà đo
+    trên kho thì cờ của chúng đúng — 803 ký tự khai `bold=True` và đúng là chữ đậm. Bỏ vế này
+    là làm hỏng chúng để sửa một họ font khác.
+
+    `medium` xếp vào nhóm đậm vì font pack chỉ có hai trọng lượng: Regular và Bold. Trong một
+    họ bốn nấc (Light/Regular/Medium/Bold) thì Medium thuộc nửa nặng, và nhiệm vụ ở đây là tái
+    tạo TƯƠNG PHẢN của bản gốc chứ không phải khớp tuyệt đối trọng lượng.
+    """
+    n = FONT_SUBSET_PREFIX_RE.sub("", name or "").lower()
+    if any(k in n for k in BOLD_NAME_HINTS):
+        return True
+    if any(k in n for k in REGULAR_NAME_HINTS):
+        return False
+    return bool(flags & 16)
 
 
 SPEC_COL_X_TOL = 3.0       # hai hàng coi là cùng một neo cột khi mép mực lệch dưới ngần này

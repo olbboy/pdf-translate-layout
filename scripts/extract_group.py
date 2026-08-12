@@ -15,7 +15,7 @@ import pymupdf
 import build_context_graph as _cg
 from _common import (RERUNNABLE_STATUSES, BlockingError, Job, exit_blocking, fill_in_rules,
                      horizontal_rules, layout_model_for, load_json, make_issue, nfc,
-                     is_serif_font, save_json, sha256_text, spec_grid_cells, spec_row_votes, utc_now,
+                     is_bold_font, is_serif_font, save_json, sha256_text, spec_grid_cells, spec_row_votes, utc_now,
                      vertical_rules)
 
 STAGE = "extract_group"
@@ -48,10 +48,11 @@ def span_from_raw(rs: dict, line: dict) -> dict | None:
 
 
 def style_of(span: dict) -> dict:
-    """Lớp style của span. `serif` quyết định theo TÊN font, không theo cờ của PDF —
-    xem `is_serif_font`: đo trên nguồn của mọi job, 9 font mang cờ serif thì 8 là sans."""
+    """Lớp style của span. `serif` VÀ `bold` quyết định theo TÊN font, không theo cờ của PDF
+    — xem `is_serif_font` (9 font mang cờ serif thì 8 là sans) và `is_bold_font`
+    (`RanyMedium` khai bold=False trong khi nó là nấc nặng của họ)."""
     f = span["flags"]
-    return {"bold": bool(f & 16), "italic": bool(f & 2),
+    return {"bold": is_bold_font(span.get("font", ""), f), "italic": bool(f & 2),
             "serif": is_serif_font(span.get("font", ""), f), "mono": bool(f & 8)}
 
 

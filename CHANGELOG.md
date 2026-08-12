@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.45] - 2026-08-12
+
+### Fixed
+
+- **Bold is decided by the font's name; the PDF flag is only consulted when the name is
+  silent.** Same reasoning as `is_serif_font` in 1.9.33. Measured on catalogue pages 53-54:
+  `RanyMedium` declares `bold=False` while being the heavy step of the Rany family, so accessory
+  *descriptions* painted as thin as the part numbers above them and the contrast the source
+  builds was lost entirely.
+
+  `is_bold_font()` differs from the serif rule in one respect: a name with no weight token
+  returns the flag rather than a default. Subset fonts with generated names (`CIDFont+F1`,
+  803 characters in the corpus) say nothing about weight, and their flags are correct —
+  breaking them to fix a different family would be a poor trade.
+
+  `medium` counts as heavy because the bundled pack has two weights: the job is to reproduce
+  the source's contrast, not to match its absolute weight. Measured across the corpus, exactly
+  two families disagree between name and flag: `RanyMedium` (7,302 characters, this document
+  only) and `SourceHanSansCN-Medium` (2 characters). On the catalogue job: 51 regions change
+  role structure, 0 region ids lost or gained, 0 source hashes changed.
+
+- **Rotated regions are capped by the source label's ink extent, not by the container.**
+  Rotated labels sit inside crowded artwork — network maps, dimension callouts — so the
+  container, already expanded to the nearest obstacle, is far wider than the space the design
+  gave the label. Filling it makes the longer Vietnamese text run across the artwork.
+
+  Measured on page 4: across 30 rotated labels the translation reaches **205% of the source
+  ink extent** (`China` 26.8pt → `Trung Quốc` 55.1pt) — a ratio no rewording can close. With
+  the cap and a `rotated_ink_floor` of 0.80, 11 labels shrink to 80–90% and `Kho Los Angeles`
+  (which needs 83%) paints instead of being skipped.
+
+  The floor must be shared between `fit_paint` and `qa_gates` — `ROTATED_INK_FLOOR_DEFAULT` in
+  `_common.py`, the same arrangement as `CONTAINER_TOL_*`. That trap sprang once during this
+  work: the two sides defaulted differently (0.80 versus `minimum_ratio`), and because jobs
+  frozen before 1.9.45 carry no such config key, the gate judged at 0.85 and raised **11
+  non-waivable `G4_RATIO_FLOOR` P0s** against the very labels the fitter had just shrunk
+  correctly.
+
 ## [1.9.44] - 2026-08-12
 
 ### Fixed

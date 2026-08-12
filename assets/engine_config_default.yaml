@@ -24,6 +24,10 @@ fonts:
   subset: true
   minimum_ratio: 0.85           # hard floor §8.2
   review_below_ratio: 0.95
+  # Vùng XOAY: cỡ chữ bị chặn trên bởi vệt mực của nhãn nguồn, nhưng không thu quá tỷ lệ này.
+  # Nhãn xoay nằm trong hình vẽ chật (bản đồ, hình chiếu kích thước) nên chữ dài hơn nguồn là
+  # đè lên artwork; thu nhỏ ít vẫn đọc được, tràn thì không sửa được bằng gì.
+  rotated_ink_floor: 0.80
 
 layout:
   # Heading một dòng không vừa khung được nới ngang vào khoảng trống ĐO ĐƯỢC trên trang

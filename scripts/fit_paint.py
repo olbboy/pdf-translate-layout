@@ -14,7 +14,7 @@ import statistics
 
 import pymupdf
 
-from _common import (CONTAINER_TOL_Y_EM_DEFAULT, FONTS_DIR, BlockingError, Job, exit_blocking,
+from _common import (ROTATED_INK_FLOOR_DEFAULT, CONTAINER_TOL_Y_EM_DEFAULT, FONTS_DIR, BlockingError, Job, exit_blocking,
                      refuse_if_released,
                      load_json, make_issue, save_json, utc_now)
 
@@ -1217,8 +1217,30 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
         return {"lines": lines, "widths": widths, "space_ws": space_ws,
                 "line_seg": line_seg}
 
+    # Vùng XOAY: cỡ chữ bị chặn trên bởi CHÍNH vệt mực của nhãn nguồn, không phải bởi khung.
+    # Nhãn xoay nằm trong hình vẽ chật — bản đồ mạng lưới, hình chiếu kích thước — nên khung
+    # (đã nới ra tới vật cản gần nhất) rộng hơn chỗ mà thiết kế dành cho nhãn rất nhiều. Vẽ
+    # đầy khung thì chữ tiếng Việt, vốn dài hơn, chạy đè lên artwork.
+    # Đo trên trang 4 của catalogue: 30 nhãn xoay, bản dịch dài trung bình 100% vệt mực nguồn
+    # và cao nhất 205% (`China` 26.8pt → `Trung Quốc` 55.1pt) — tỷ lệ mà không cách viết nào
+    # rút xuống được, vì đó là chênh lệch của hai ngôn ngữ.
+    # Nên chặn cỡ chữ theo vệt mực nguồn, sàn `rotated_ink_floor`: nhãn nào vượt thì thu tới
+    # sàn rồi thôi. Thu 20% vẫn đọc được; tràn thì không sửa được bằng gì ngoài DTP tay.
+    size_cap = src_size
+    if reg["rotation"] in (90, 270) and reg["lines"]:
+        ink_ext = (max(l["bbox"][3] for l in reg["lines"])
+                   - min(l["bbox"][1] for l in reg["lines"]))
+        need = (sum(pack.font(k).text_length(t["text"], fontsize=src_size)
+                    for t, k in zip(tokens, tok_font))
+                + sum(pack.font(k).text_length(" ", fontsize=src_size)
+                      for k in tok_font[:-1]))
+        if need > 0 and ink_ext > 0:
+            rot_floor = cfg["fonts"].get("rotated_ink_floor", ROTATED_INK_FLOOR_DEFAULT)
+            size_cap = src_size * min(1.0, max(rot_floor, ink_ext / need))
+    floor = min(floor, size_cap)
+
     def run_search(cap_one_line: bool = False):
-        lo, hi, best_, s_ = floor, src_size, None, None
+        lo, hi, best_, s_ = floor, size_cap, None, None
         if layout_at(hi, cap_one_line):
             return layout_at(hi, cap_one_line), hi
         for _ in range(24):  # binary search max size thỏa constraints (spec §6.8)

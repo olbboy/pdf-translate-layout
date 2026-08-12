@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.44"
+  version: "1.9.45"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.44 (engine `1.9.44`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.45 (engine `1.9.45`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -220,7 +220,30 @@ metadata:
 > 87.8pt — thiếu 3pt mà mất cả nhãn; `North American Marketing Center` thiếu 6.3pt. Không vừa
 > nổi một dòng ngay ở sàn thì vẫn quay về luật cũ, nên nhánh này không thể làm xấu hơn hiện
 > trạng. Đo trên trang 4: bỏ vẽ **9 → 7 vùng**, hai nhãn bản đồ được cứu.
-> **Bốn sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
+> **1.9.45** → hai sửa về TRỌNG LƯỢNG và CỠ CHỮ.
+> (1) **`is_bold_font`: chữ đậm quyết định theo TÊN font, cờ của PDF chỉ dùng khi tên câm.**
+> Cùng lý lẽ `is_serif_font` (1.9.33). Ca thật catalogue tr.53-54: `RanyMedium` khai
+> `bold=False` trong khi nó là nấc nặng của họ Rany — phần MÔ TẢ phụ kiện vẽ mảnh y như mã
+> hàng, mất hẳn tương phản bản gốc dựng. Khác `is_serif_font` một chỗ: tên KHÔNG có dấu hiệu
+> trọng lượng thì **trả về cờ**, không trả mặc định — font subset tên tự sinh (`CIDFont+F1`,
+> 803 ký tự) không nói gì về trọng lượng mà cờ của chúng đúng.
+> `medium` xếp vào nhóm đậm vì font pack chỉ có hai nấc: nhiệm vụ là tái tạo TƯƠNG PHẢN, không
+> phải khớp tuyệt đối. Đo trên kho: đúng **2 họ font** lệch giữa tên và cờ — `RanyMedium`
+> (7302 ký tự, chỉ tài liệu này) và `SourceHanSansCN-Medium` (2 ký tự). Job catalogue: **51
+> vùng đổi cấu trúc role, 0 region_id mất/mới, 0 source_hash đổi.**
+> (2) **Vùng XOAY: cỡ chữ bị chặn trên bởi vệt mực của nhãn NGUỒN**, sàn `rotated_ink_floor`
+> (0.80). Nhãn xoay nằm trong hình vẽ chật — bản đồ mạng lưới, hình chiếu kích thước — nên
+> khung (đã nới tới vật cản gần nhất) rộng hơn chỗ thiết kế dành cho nhãn rất nhiều; vẽ đầy
+> khung thì chữ tiếng Việt chạy đè lên artwork. Đo trên trang 4: 30 nhãn xoay, bản dịch dài
+> tới **205% vệt mực nguồn** (`China` 26.8pt → `Trung Quốc` 55.1pt) — tỷ lệ mà không cách viết
+> nào rút xuống được. Sau vá: 11 nhãn thu về 80-90%, `Kho Los Angeles` (cần 83%) vẽ được thay
+> vì bị bỏ.
+> **Sàn này phải dùng CHUNG giữa `fit_paint` và `qa_gates`** — `ROTATED_INK_FLOOR_DEFAULT` ở
+> `_common.py`, cùng cách với `CONTAINER_TOL_*`. Bẫy đã sập một lần: hai bên đặt default khác
+> nhau (0.80 và `minimum_ratio`), job đóng băng config trước 1.9.45 không có khoá nên gate
+> chấm bằng 0.85 và bắn **11 `G4_RATIO_FLOOR` — P0 không waive được** cho đúng những nhãn
+> fitter vừa thu đúng luật.
+> **Sáu sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
 > hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
 > đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
 > Job cũ chạy lại stage 2 → 7 là hưởng.
