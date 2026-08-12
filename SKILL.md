@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.45"
+  version: "1.9.46"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.45 (engine `1.9.45`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.46 (engine `1.9.46`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -243,6 +243,20 @@ metadata:
 > nhau (0.80 và `minimum_ratio`), job đóng băng config trước 1.9.45 không có khoá nên gate
 > chấm bằng 0.85 và bắn **11 `G4_RATIO_FLOOR` — P0 không waive được** cho đúng những nhãn
 > fitter vừa thu đúng luật.
+> **1.9.46** → font pack có thêm **face KÝ HIỆU** `NotoSansSymbols2-Regular` (OFL-1.1, cùng
+> nguồn `notofonts.github.io` với 10 face chữ). `FontPack.FALLBACK_CHAIN` trước đó dừng ở
+> `mono-regular`, nên **một ký tự ký hiệu duy nhất** làm cả vùng thành `FONT_GLYPH_MISSING`
+> (P1) và bỏ vẽ — mất trọn bản dịch của vùng đó, không chỉ mất cái dấu.
+> Face ký hiệu đứng **CUỐI** chain và không bao giờ là face chính: `key_for` chỉ trả
+> sans/serif/mono, và selftest chốt cả hai điều đó cùng với việc nó KHÔNG phủ chữ Việt.
+> Phủ được `✓ ✔ ✗ ▪ • ○ ◇` và các khối ký hiệu khác. Giới hạn còn lại: `cover()` đòi MỘT face
+> phủ trọn **token**, nên `kiểm✓` dính liền vẫn hỏng — tách bằng dấu cách thì chạy. Codepoint
+> **PUA** của Wingdings/Symbol thì không font chuẩn nào có; bản dịch phải thay bằng ký hiệu
+> Unicode thật (ca thật: `U+F0FC` của khối CSS trang 4 → `✓`).
+> Kèm sửa một **nhãn chẩn đoán sai**: từ 1.9.44 vùng xoay chỉ nhận bố cục một dòng, nên bản
+> dịch nhiều đoạn không còn cỡ chữ nào hợp lệ và rơi ra `FIT_IMPOSSIBLE` — gửi người duyệt đi
+> rút ngắn chữ trong khi thứ chặn là số ĐOẠN. Nay vùng xoay có ngắt dòng cứng báo đúng
+> `ROTATED_MULTILINE`. Đo trên job: 2 vùng đổi nhãn, không vùng nào đổi kết quả vẽ.
 > **Sáu sửa này đổi `runs` và `alignment` trong `regions.json` nhưng KHÔNG đổi `region_id`
 > hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
 > đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
@@ -1046,7 +1060,7 @@ So sánh resource/visual dùng **content digest + geometric tolerance (~1pt)** v
 - Deps trong [requirements.txt](requirements.txt) — Python >= 3.10; `pymupdf==1.27.2.3` pin cứng
   (đổi pymupdf phải chạy lại golden tests; dep phụ dùng floor version, setup.sh chỉ enforce pin pymupdf).
 - **Runtime offline:** network chỉ cần một lần lúc `setup.sh` cài deps.
-- `assets/fonts/`: Noto pack **đã bundle** — 10 static faces (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic), SHA-256 pinned trong `fonts_manifest.json`, full Vietnamese coverage đã test kể cả dấu chồng (spec §7.2).
+- `assets/fonts/`: Noto pack **đã bundle** — 10 static faces chữ (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic) + `NotoSansSymbols2-Regular` làm fallback KÝ HIỆU, SHA-256 pinned trong `fonts_manifest.json`, full Vietnamese coverage đã test kể cả dấu chồng (spec §7.2). Face ký hiệu đứng CUỐI `FontPack.FALLBACK_CHAIN` và không bao giờ là face chính — `key_for` chỉ trả sans/serif/mono.
 
 ## 9. Chạy Đa Agent (Claude Code / Codex / Antigravity)
 
@@ -1107,7 +1121,7 @@ pdf-translate-layout/
 │   ├── approve.py              # stage 8
 │   └── selftest.py             # pure-function tests
 └── assets/
-    ├── fonts/                  # Noto pack 10 faces + fonts_manifest.json (SHA-256) + OFL.txt
+    ├── fonts/                  # Noto pack 10 faces chữ + 1 face ký hiệu + fonts_manifest.json (SHA-256) + OFL.txt
     ├── engine_config_default.yaml
     ├── default_glossary.csv
     └── domain_context.template.md
@@ -1120,8 +1134,10 @@ pdf-translate-layout/
 - Rotation: 0/90/180/270; rotated **multi-line** → P1 review, không tự paint.
 - `reuse_source_font: false` — luôn map sang Noto bundle (nhánh conservative §7.3);
   display font → P1 `FONT_DISPLAY_FALLBACK` cho reviewer xác nhận.
-- Symbol/CJK fallback families chưa bundle — codepoint ngoài coverage → blocking
-  `FONT_GLYPH_MISSING` (fail-closed, không tofu).
+- Ký hiệu: `NotoSansSymbols2-Regular` đã bundle từ 1.9.46 (✓ ✔ ✗ ▪ • ○ ◇ …). CJK fallback
+  vẫn chưa bundle. `cover()` đòi MỘT face phủ trọn token, nên token trộn chữ Việt với ký hiệu
+  (`kiểm✓` dính liền) vẫn hỏng — tách bằng dấu cách thì chạy. Codepoint ngoài coverage, kể cả
+  PUA của Wingdings/Symbol, → blocking `FONT_GLYPH_MISSING` (fail-closed, không tofu).
 - Table detection theo `find_tables` (bordered); bảng không kẻ khung có thể được
   group như paragraph.
 - Continuation qua page break: heuristic cơ bản (câu chưa kết + chữ thường đầu trang).

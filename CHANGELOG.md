@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.46] - 2026-08-12
+
+### Added
+
+- **A symbol face joins the font pack.** `NotoSansSymbols2-Regular` (OFL-1.1, same
+  `notofonts.github.io` build as the ten text faces) now sits at the end of
+  `FontPack.FALLBACK_CHAIN`, which previously stopped at `mono-regular`. One symbol character
+  was enough to turn a whole region into `FONT_GLYPH_MISSING` and drop it — losing the entire
+  translation of that region, not merely the mark.
+
+  It is never selected as a primary face: `key_for` only ever returns sans/serif/mono, and the
+  selftest pins that, the chain order, and the fact that the face carries no Vietnamese
+  letters. Coverage includes `✓ ✔ ✗ ▪ • ○ ◇` and the wider symbol blocks.
+
+  Remaining limit: `cover()` requires a single face to span an entire **token**, so
+  `kiểm✓` written without a space still fails; separated by a space it resolves. Private-use
+  codepoints from Wingdings/Symbol are in no standard font — the translation has to substitute
+  a real Unicode symbol (real case: `U+F0FC` in the page-4 CSS block → `✓`).
+
+### Fixed
+
+- **A misleading diagnostic on rotated regions.** Since 1.9.44 rotated regions only accept a
+  single-line layout, so a translation with several paragraphs has no valid size left and fell
+  out as `FIT_IMPOSSIBLE` — pointing the reviewer at shortening the text when what blocks it is
+  the paragraph *count*. Rotated regions carrying hard breaks now report `ROTATED_MULTILINE`.
+  Measured on the catalogue job: 2 regions relabelled, none changed its painted outcome.
+
 ## [1.9.45] - 2026-08-12
 
 ### Fixed

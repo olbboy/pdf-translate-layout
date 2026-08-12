@@ -75,9 +75,16 @@ class FontPack:
             self._alias[key] = f"NF{len(self._alias)}"
         return self._alias[key]
 
+    # Chain fallback khi face chính thiếu glyph. `symbols-regular` đứng CUỐI và không bao giờ
+    # là face chính (`key_for` chỉ trả sans/serif/mono): nó phủ ký hiệu — dấu tick, gạch đầu
+    # dòng, mũi tên, hình khối — mà ba face chữ không có. Trước 1.9.46 chain dừng ở
+    # `mono-regular`, nên một ký tự ký hiệu duy nhất làm cả vùng thành `FONT_GLYPH_MISSING`
+    # (P1, bỏ vẽ) và toàn bộ bản dịch của vùng đó mất theo.
+    FALLBACK_CHAIN = ("sans-regular", "serif-regular", "mono-regular", "symbols-regular")
+
     def cover(self, key: str, text: str) -> str | None:
         """Font đầu tiên trong chain phủ hết text; None nếu không có (→ blocking)."""
-        chain = [key] + [k for k in ("sans-regular", "serif-regular", "mono-regular")
+        chain = [key] + [k for k in self.FALLBACK_CHAIN
                          if k != key and k in self.entries]
         for k in chain:
             f = self.font(k)
@@ -1312,6 +1319,13 @@ def fit_region(reg: dict, pack: FontPack, cfg: dict,
             else:
                 c, cw, wrap_w, avail_h, align, best, s_fit = keep
     if best is None:
+        # Vùng xoay có ngắt dòng cứng thì nguyên nhân là giới hạn v1, không phải thiếu chỗ:
+        # từ 1.9.44 vùng xoay chỉ nhận bố cục MỘT dòng, nên bản dịch nhiều đoạn không có cỡ
+        # chữ nào hợp lệ. Báo `FIT_IMPOSSIBLE` ở đây gửi người duyệt đi tìm nhầm hướng — họ
+        # sẽ thử rút ngắn chữ, trong khi thứ chặn là số ĐOẠN chứ không phải bề rộng.
+        if reg["rotation"] in (90, 270) and any(t.get("br") for t in tokens):
+            return None, issues + [("ROTATED_MULTILINE", "P1",
+                                    "text xoay nhiều dòng chưa hỗ trợ v1 — needs review")]
         return None, issues + [("FIT_IMPOSSIBLE", "P1",
                                 f"không fit được trong container ngay tại floor "
                                 f"{cfg['fonts']['minimum_ratio']:.0%} (src {src_size}pt)")]

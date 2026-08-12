@@ -69,7 +69,9 @@ Key properties:
   (PyMuPDF is pinned — redaction/subsetting behavior is version-tested)
 - Fonts: a Noto pack (Sans/Serif/Mono × Regular/Bold/Italic/BoldItalic) is
   bundled in `assets/fonts/` with pinned SHA-256 manifest and full Vietnamese
-  coverage, including stacked diacritics.
+  coverage, including stacked diacritics. `NotoSansSymbols2-Regular` rides along
+  as a symbol fallback (✓ ✔ ✗ ▪ • ○ ◇); it sits last in the fallback chain and is
+  never selected as a primary face.
 
 ## Usage
 

@@ -1496,6 +1496,24 @@ check("bold: tên câm thì NGHE CỜ — font subset tự sinh khai đúng",
 check("bold: tiền tố subset 6 chữ hoa không che được tên",
       _ibf("ABCDEF+RanyMedium", 0) is True)
 
+# ── face ký hiệu trong font pack (1.9.46) ──────────────────────────────
+# Một ký tự ký hiệu duy nhất từng làm cả vùng thành FONT_GLYPH_MISSING và mất trọn bản dịch.
+_pack = _fp.FontPack()
+check("font pack: có face ký hiệu",
+      "symbols-regular" in _pack.entries)
+check("font pack: dấu tick ✓ được face ký hiệu phủ",
+      _pack.cover("sans-regular", "✓") == "symbols-regular")
+check("font pack: face ký hiệu đứng CUỐI chain fallback",
+      _pack.FALLBACK_CHAIN[-1] == "symbols-regular")
+check("font pack: key_for KHÔNG bao giờ trả face ký hiệu",
+      all(_pack.key_for({"bold": b, "italic": i, "serif": s, "mono": m})[0]
+          != "symbols-regular"
+          for b in (0, 1) for i in (0, 1) for s in (0, 1) for m in (0, 1)))
+check("font pack: face ký hiệu không phủ chữ Việt (không được thay face chính)",
+      not _pack.font("symbols-regular").has_glyph(ord("ệ")))
+check("font pack: codepoint PUA của Wingdings vẫn nằm ngoài pack",
+      _pack.cover("sans-regular", "") is None)
+
 # ── điểm vẽ thật = mép mực, không phải origin có đệm space (1.9.16) ─────
 # `ink_base_x` của stage 6 nâng base_x lên mép mực từ 1.9.6/1.9.9; stage 2 vẫn trả origin
 # thô nên container ô bảng bị kéo sang trái đúng bề rộng dãy space. Ca thật V5: ô `CANH`
