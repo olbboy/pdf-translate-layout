@@ -1450,6 +1450,19 @@ check("căn lề: hai dòng không mốc nào đồng thuận thì giữ luật 
 check("căn lề: region một dòng không đụng tới nhánh mới",
       _eg.infer_alignment([_ln(30.0, 200.0)], _CONT) == "left")
 
+# ── thụt lề treo: dòng đầu chạm mép trái khung thì khối căn trái (1.9.44) ───────
+# Ca thật catalogue tr.51: mép trái lệch 13.7pt, mép phải lệch 2.9pt → luật biên độ chọn
+# "right" và cả cụm bị đẩy sang phải, dù ô anh em 3 dòng ngay trên vẫn "left".
+check("căn lề: thụt lề treo (dòng đầu chạm mép trái khung) → left",
+      _eg.infer_alignment([_ln(27.0, 205.7), _ln(40.7, 208.6)], _CONT) == "left")
+check("căn lề: dòng đầu KHÔNG chạm mép trái khung thì giữ luật biên độ",
+      _eg.infer_alignment([_ln(120.0, 300.0), _ln(150.0, 297.1)], _CONT) == "right")
+check("căn lề: dòng sau nằm TRÁI hơn dòng đầu thì không phải thụt lề treo",
+      _eg.infer_alignment([_ln(27.0, 300.0), _ln(20.0, 297.1)], _CONT) != "left")
+check("căn lề: khối căn giữa thật (biên độ chọn center) không dính luật thụt lề treo",
+      _eg.infer_alignment([_ln(74.9, 344.7), _ln(108.7, 316.9)],
+                          [74.9, 0.0, 413.5, 100.0]) == "center")
+
 # ── điểm vẽ thật = mép mực, không phải origin có đệm space (1.9.16) ─────
 # `ink_base_x` của stage 6 nâng base_x lên mép mực từ 1.9.6/1.9.9; stage 2 vẫn trả origin
 # thô nên container ô bảng bị kéo sang trái đúng bề rộng dãy space. Ca thật V5: ô `CANH`
@@ -1598,6 +1611,33 @@ check("role: run thường theo sau chỉ có khoảng trắng thì KHÔNG hạ 
 check("role: đậm mở đầu nhưng sau toàn đậm thì không đổi vai",
       _roles([_span("A", True), _span("B", True)]) == ["body"])
 
+# ── hai kiểu chữ thật cùng role body → tách sang emphasis (1.9.44) ──────
+# Ca thật catalogue tr.53-54: mã hàng RanyLight 11pt xám + mô tả RanyMedium 13.6pt gần đen,
+# cả hai bold=False nên luật độ đậm không tách được và cả khối vẽ theo run đầu.
+def _sp2(text, size, color, x=0.0):
+    return {"text": text, "font": "ArialMT", "size": size, "color": color, "flags": 0,
+            "origin": (x, 10.0), "bbox": (x, 0.0, x + 10.0, 10.0)}
+
+
+check("role: hai kiểu chữ thật cùng body → nhóm nhỏ sang emphasis",
+      _roles([_sp2("161412100245/161412100244", 11.0, 5855063),
+              _sp2("UL10269-4AWG-2000mm-Negative/Positive", 13.6, 257)])
+      == ["emphasis", "body"])
+check("role: nhóm đông hơn giữ body (bất biến còn chỗ cho role_style)",
+      "body" in _roles([_sp2("mã hàng", 11.0, 5855063),
+                        _sp2("mô tả dài hơn nhiều lần", 13.6, 257)]))
+check("role: dấu chú thích mũ quá ngắn thì KHÔNG tách (giữ gộp như 1.9.21)",
+      _roles([_sp2("Cycle Life", 10.0, 0), _sp2("[2]", 6.0, 0)]) == ["body", "body"])
+check("role: cùng cỡ khác màu là nhãn/trị số của bảng, không tách",
+      _roles([_sp2("Nhiệt độ vận hành", 10.0, 0), _sp2("-20~55°C", 10.0, 5855063)])
+      == ["body", "body"])
+check("role: ba nhóm kiểu trở lên thì không tách (bảng trộn nhiều mức)",
+      _roles([_sp2("aaaaaa", 10.0, 0), _sp2("bbbbbb", 13.0, 0), _sp2("cccccc", 16.0, 0)])
+      == ["body", "body", "body"])
+check("role: vùng đã có emphasis do độ đậm thì luật cỡ chữ không đụng vào",
+      _roles([_span("Danger", True), _sp2("thân bài dài hơn hẳn", 13.6, 257)])
+      == ["emphasis", "body"])
+
 # ── base_x theo nét mực, không theo origin có đệm space (1.9.6) ─────────
 # Bản gốc căn chữ bằng dãy space; space có advance nhưng không vẽ gì, còn tokenize thì bỏ
 # sạch token khoảng trắng — nên bản dịch bị kéo về đầu dãy space. Ca thật V5 Series: ô
@@ -1688,6 +1728,25 @@ check("keep: mất hẳn thì báo đúng ký tự thiếu",
       _qg.char_deficit("ALM", "") == collections.Counter({"A": 1, "L": 1, "M": 1}))
 check("keep: thiếu một trong hai ký tự trùng nhau vẫn bị bắt",
       _qg.char_deficit("11", "1") == collections.Counter({"1": 1}))
+
+import pymupdf as _pymupdf
+
+# ── read_window: cửa sổ đọc của Gate 3 nhánh keep (engine 1.9.44) ─────────────────────
+# Ca thật catalogue trang 30/36: container bề rộng ÂM, mực thò 0.1pt khỏi cửa sổ cũ.
+_DEGEN = [591.1, 62.5, 589.3, 70.5]      # x0 > x1
+_INK = [591.1, 62.5, 591.4, 62.6]
+check("read_window: container suy biến được chuẩn hoá, bao trọn dải x thật",
+      _qg.read_window(_DEGEN, None).contains(
+          _pymupdf.Rect(_DEGEN).normalize()))
+check("read_window: cửa sổ bao trọn vệt mực của container suy biến",
+      _qg.read_window(_DEGEN, _INK).contains(_pymupdf.Rect(_INK)))
+check("read_window: cửa sổ CŨ (pad thẳng, không chuẩn hoá) hụt mép phải vệt mực",
+      not (_pymupdf.Rect(_DEGEN) + (-2, -2, 2, 2)).contains(_pymupdf.Rect(_INK)))
+check("read_window: container bình thường vẫn nới đúng 2pt mỗi phía",
+      _qg.read_window([10, 20, 110, 40], None) == _pymupdf.Rect(8, 18, 112, 42))
+check("read_window: bbox mực nằm trong khung thì không nới thêm",
+      _qg.read_window([10, 20, 110, 40], [30, 25, 60, 35])
+      == _pymupdf.Rect(8, 18, 112, 42))
 
 # ── tổng kết ────────────────────────────────────────────────────────────
 # PHẢI là thứ cuối cùng trong file. Trước 1.8.0 khối này nằm giữa file, nên ~100 case

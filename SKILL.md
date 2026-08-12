@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.43"
+  version: "1.9.44"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.43 (engine `1.9.43`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.44 (engine `1.9.44`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -173,6 +173,20 @@ metadata:
 > phải luật. Cụm nhì đạt ≥80% số ký tự cụm nhất thì lấy **cỡ lớn hơn**: nhãn chính là thứ mắt
 > đọc trước, và fitter còn quyền thu nhỏ nếu không vừa — thu từ cỡ đúng xuống an toàn hơn phóng
 > từ cỡ sai lên. Đo trên chính ô đó: src_size 9.0 → fit 8.96pt, 5 dòng, không sinh issue.
+> **1.9.44** → cửa sổ đọc của **Gate 3 nhánh keep** chuẩn hoá khung và hợp thêm vệt mực
+> (`read_window`). `container` có thể SUY BIẾN — `x0 > x1`, bề rộng ÂM — khi bản gốc để lại
+> text object cỡ 0; cộng pad vào một dải đảo chiều cho ra cửa sổ lệch chỗ. Ca thật
+> 2026-08-12, PYTES ESS Catalogue trang 30/36: container `[591.1, 62.5, 589.3, 70.5]`, mực ở
+> `[591.1, 62.5, 591.4, 62.6]`; cửa sổ cũ dừng ở 591.3 — **hụt đúng 0.1pt** so với mép phải
+> glyph, nên gate báo `G3_KEEP_LOST` trong khi trích xuất bằng khung nới 3pt cho `'000000'` ở
+> **CẢ nguồn lẫn bản dịch**. Đây là **P0 không waive được**, nên hai báo giả này chặn đứng
+> phát hành một job sạch 1601/1620 vùng.
+> Cùng lớp lỗi 1.4.4 và 1.9.5 đã sửa cho nhánh translate: cửa sổ đo hụt thì gate nói mất chữ
+> trong khi chữ có thật. Nhánh keep sót lại tới 1.9.43.
+> Không nới lỏng phép so: `char_deficit` đếm theo bội nên thiếu ký tự vẫn bị bắt bất kể cửa sổ
+> rộng bao nhiêu; hình học vẫn là việc của Gate 4. Đo trước khi vá: **3/10943 region toàn kho
+> có container suy biến**, cả ba là vùng `keep` của chính tài liệu này. Sau vá: 2 P0 → 0,
+> không region nào đang sạch bị chuyển thành lỗi.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:

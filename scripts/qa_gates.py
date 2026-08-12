@@ -51,6 +51,30 @@ def char_deficit(want: str, got: str) -> collections.Counter:
     return collections.Counter(nospace(want)) - collections.Counter(nospace(got))
 
 
+def read_window(container, ink_bbox, pad=2.0) -> pymupdf.Rect:
+    """Cửa sổ đọc cho câu hỏi "chữ còn hay mất": khung ô HỢP vệt mực, đã chuẩn hoá.
+
+    Hai lý do phải chuẩn hoá và phải hợp thêm bbox mực:
+
+    (1) `container` có thể SUY BIẾN — `x0 > x1`, tức bề rộng âm. Text object cỡ 0 của bản
+        gốc sinh ra khung như vậy; cộng pad vào một dải đảo chiều cho ra cửa sổ lệch chỗ.
+        Ca thật 2026-08-12, catalogue trang 30/36: container `[591.1, 62.5, 589.3, 70.5]`,
+        mực ở `[591.1, 62.5, 591.4, 62.6]` — cửa sổ cũ dừng ở 591.3, hụt đúng 0.1pt so với
+        mép phải của glyph, nên gate báo mất chữ trong khi cả nguồn lẫn bản dịch đều còn
+        nguyên `'000000'`. Đo khi vá: 3/10943 region toàn kho có container suy biến, cả ba
+        là vùng `keep` của chính tài liệu này.
+
+    (2) Gate 3 đo ĐỘ PHỦ, không đo bố cục — hình học là việc của Gate 4. Cửa sổ vì thế phải
+        bao được chỗ chữ THẬT SỰ nằm, chứ không phải chỗ khung khai là nó nằm. Hợp thêm
+        `ink_bbox` không nới lỏng phép so: thiếu ký tự vẫn bị bắt, vì `char_deficit` đếm
+        theo bội và không quan tâm cửa sổ rộng bao nhiêu.
+    """
+    r = pymupdf.Rect(container).normalize()
+    if ink_bbox:
+        r |= pymupdf.Rect(ink_bbox).normalize()
+    return r + (-pad, -pad, pad, pad)
+
+
 def rect_of(fr_line: dict, size: float) -> pymupdf.Rect:
     x0 = min(s["x"] for s in fr_line["segments"])
     x1 = max(s["x"] + s["width"] for s in fr_line["segments"])
@@ -196,7 +220,7 @@ def run_gates(job: Job) -> None:
     for r in regions.values():
         if r["translation_action"] == "keep" and r["page"] in painted_pages \
                 and r["source_text"].strip():
-            clip = pymupdf.Rect(r["container"]) + (-2, -2, 2, 2)
+            clip = read_window(r["container"], r.get("bbox"))
             got = norm(draft[r["page"]].get_text("text", clip=clip))
             want = norm(r["source_text"])
             if want in got or nospace(want) in nospace(got):

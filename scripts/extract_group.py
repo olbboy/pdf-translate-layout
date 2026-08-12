@@ -322,6 +322,22 @@ def infer_alignment(lines: list, container: list) -> str:
         m = min(vl, vr, vc)
         if m == vl:
             return "left"
+        # Hình THỤT LỀ TREO: dòng đầu chạm đúng mép trái khung, mọi dòng sau lùi vào trong.
+        # Đó là bằng chứng trực tiếp — chữ bắt đầu ngay tại mép trái của ô thì ô căn trái,
+        # còn khối căn giữa/phải chỉ chạm x0 do trùng hợp. Biên độ mép phải hẹp hơn ở đây chỉ
+        # vì lề phải răng cưa, không phải vì có mốc căn phải.
+        # Ca thật catalogue tr.51: `Unbalanced Loads Supported` / `50% of Rated Power Each
+        # Phase` — mép trái lệch 13.7pt, mép phải lệch 2.9pt, nên luật biên độ chọn "right"
+        # và cả cụm bị đẩy sang phải, trong khi ô anh em 3 dòng ngay trên vẫn "left".
+        # Chỉ can thiệp khi biên độ chọn "right": khối căn giữa thật (tựa bìa quick guide
+        # V16 Lite, dòng 2 thụt 33.8pt trái và 27.8pt phải) có `vc` nhỏ nhất nên không dính.
+        # Đo trên 1840 vùng >=2 dòng của toàn kho: 181 vùng rơi vào luật biên độ, luật này
+        # đổi đúng 12 — toàn hàng bảng thông số, dòng mục lục và gạch đầu dòng tính năng,
+        # 0 ca oan. Luật rộng hơn (chỉ đòi MỘT dòng bất kỳ chạm x0) đổi 47 vùng, trong đó
+        # phá hỏng nhãn hình căn giữa và cặp `Figure N` — không ship.
+        if m == vr and abs(lefts[0] - container[0]) <= 1.0 \
+                and all(x > lefts[0] + 1.0 for x in lefts[1:]):
+            return "left"
         return "center" if m == vc else "right"
     x0, _, x1, _ = lines[0]["bbox"]
     cw = container[2] - container[0]
@@ -475,7 +491,61 @@ def build_runs(all_spans: list) -> list:
     # chính chỗ đó vô hiệu hoá `emphasis` của tiêu đề phụ mở đầu.
     if runs and not any(r["role"] == "body" for r in runs):
         runs[0]["role"] = "body"
+    split_style_roles(runs)
     return runs
+
+
+SPLIT_MIN_SHARE = 0.25   # nhóm kiểu thứ hai phải chiếm ngần này số ký tự có chữ của vùng
+SPLIT_SIZE_RATIO = 1.15  # và cỡ chữ phải chênh ngần này lần
+
+
+def split_style_roles(runs: list) -> None:
+    """Vùng toàn `body` nhưng mang HAI kiểu chữ thật thì tách nhóm nhỏ hơn sang `emphasis`.
+
+    Engine vẽ MỘT kiểu cho mỗi role. `role_style`/`role_face` (1.9.34-1.9.36) đã chọn được
+    đại diện tốt nhất cho một role, nhưng khi trong role có hai kiểu **đều là chữ thật** thì
+    không đại diện nào đúng cả — một nửa vùng chắc chắn sai cỡ, sai màu.
+
+    Ca thật PYTES ESS Catalogue trang 53-54, mỗi mục phụ kiện là một region: mã hàng
+    `RanyLight 11pt` xám `#595a57` rồi mô tả `RanyMedium 13.6pt` gần đen `#000101`. Cả hai
+    run đều `bold=False` nên luật độ đậm không tách được, `role_style` lấy run đầu có mực →
+    cả khối vẽ xám 11pt, mô tả mất cỡ chữ, mất độ đậm và mất màu so với bản gốc.
+
+    Luật CHẶT, đo trên 702 vùng có ≥2 run `body` có chữ của toàn kho:
+
+    - Vùng phải **chưa có role nào khác** `body` — có `emphasis`/`label` rồi thì độ đậm đã
+      tách đúng, không đụng vào.
+    - Gom theo `(cỡ, màu)` phải ra **đúng hai nhóm**. Ba nhóm trở lên là bảng thông số trộn
+      nhiều mức, tách sẽ nham nhở.
+    - Nhóm nhì phải chiếm ≥25% số ký tự có chữ. Không có chốt này thì 115 vùng dính, phần lớn
+      là **dấu chú thích mũ** (`[1]`, `[2]` 6pt cạnh thân 10pt) và số trên trục biểu đồ —
+      những thứ engine cố ý gộp vào dòng chủ từ 1.9.21.
+    - Cỡ chữ phải chênh ≥15%. Cùng cỡ khác màu là nhãn/trị số của bảng, không phải hai kiểu.
+
+    Sau bốn chốt: **22 vùng toàn kho**, tập trung đúng ở trang phụ kiện và các hàng
+    `Dimensions` trộn cỡ. Nhóm ĐÔNG hơn giữ `body` — bất biến "luôn còn một run body" và
+    `role_style('body')` vẫn có chỗ bám, nên response cũ chỉ dùng `body` vẫn hợp lệ và vẽ ra
+    y như trước; phần lợi chỉ đến khi bản dịch tách run.
+    """
+    ink = [r for r in runs if r["text"].strip()]
+    if len(ink) < 2 or any(r["role"] != "body" for r in runs):
+        return
+    groups: dict = {}
+    for r in ink:
+        groups.setdefault((round(r.get("size") or 0.0, 1), r.get("color")), []).append(r)
+    if len(groups) != 2:
+        return
+    (big_k, big), (small_k, small) = sorted(
+        groups.items(), key=lambda kv: -sum(len(r["text"].strip()) for r in kv[1]))
+    n_big = sum(len(r["text"].strip()) for r in big)
+    n_small = sum(len(r["text"].strip()) for r in small)
+    if n_small < SPLIT_MIN_SHARE * (n_big + n_small):
+        return
+    lo, hi = sorted((big_k[0], small_k[0]))
+    if lo <= 0 or hi / lo < SPLIT_SIZE_RATIO:
+        return
+    for r in small:
+        r["role"] = "emphasis"
 
 
 SUP_MAX_CHARS = 6      # ký hiệu mũ dài hơn ngần này thì không phải chú thích

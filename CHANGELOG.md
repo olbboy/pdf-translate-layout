@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.44] - 2026-08-12
+
+### Fixed
+
+- **Gate 3's keep branch no longer reports lost text when the source left a degenerate
+  container behind.** A `container` can come back with `x0 > x1` — a negative width — when the
+  source PDF carries a zero-scale text object. Padding a reversed span produces a window in
+  the wrong place, so the gate looked where the text is not.
+
+  Measured on PYTES ESS Catalogue pages 30 and 36: container `[591.1, 62.5, 589.3, 70.5]`,
+  ink at `[591.1, 62.5, 591.4, 62.6]`. The old window stopped at 591.3 — **0.1pt short** of the
+  glyph's right edge — and raised `G3_KEEP_LOST`, while reading the same area with a 3pt pad
+  returns `'000000'` from **both the source and the draft**. `G3_KEEP_LOST` is a
+  non-waivable P0, so two false positives blocked release of a job that had painted
+  1601 of 1620 regions cleanly.
+
+  Same class as the windows already fixed for the translate branch in 1.4.4 and 1.9.5: when the
+  reading window falls short, the gate claims missing text that is plainly on the page. The keep
+  branch was left behind until now.
+
+  `read_window()` normalises the rect and unions it with the region's ink bbox before padding.
+  This does not loosen the comparison — `char_deficit` counts by multiplicity, so genuinely
+  missing characters are still caught however wide the window gets, and geometry remains
+  Gate 4's job.
+
+  Scope measured before the patch: **3 of 10,943 regions across the whole corpus** have a
+  degenerate container, all three `keep` regions in this one document. After: 2 P0 → 0, with no
+  previously-clean region turning into a failure.
+
 ## [1.9.43] - 2026-08-09
 
 ### Fixed
