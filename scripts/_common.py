@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import unicodedata
+from collections import Counter
 
 import pymupdf
 import yaml
@@ -560,6 +561,47 @@ def authenticity_cfg(cfg: dict) -> dict:
     return {"identical_ratio_max": a.get("identical_ratio_max", 0.05),
             "lang_suspect_ratio_max": a.get("lang_suspect_ratio_max", 0.05),
             "min_words": a.get("min_words", 4)}
+
+
+# Một PDF có ToUnicode CMap hỏng phát ra glyph index thay vì Unicode: text layer đọc ra
+# `(XURSHDQ JHQHUDO` trong khi trang hiện `European general` — mọi mã dịch đi 29. Không
+# stage nào bắt được: extract vẫn thấy span, fit_paint vẫn vẽ được, QA vẫn round-trip khớp
+# vì cả hai vế đều là rác giống hệt nhau. Hai job đã phải sửa nguồn bằng tay trước khi dịch
+# (`pi_station_261_ex_user_manual_-_tounicode_repaired`, `luxpower_guide_for_v5_-_...`).
+READABLE_RATIO_MIN = 0.02     # dưới ngưỡng này chữ không thuộc ngôn ngữ nào
+MIN_READABLE_TOKENS = 200     # ít hơn ngần này từ Latin thì tỉ lệ chỉ là nhiễu
+
+# Chỉ chữ Latin. Cố ý loại Hy Lạp và Kirin — dải `À-ỹ` rộng hơn sẽ nuốt chúng và chấm một
+# tài liệu tiếng Nga gần 0, đọc nhầm thành mojibake. × (U+00D7) và ÷ (U+00F7) bị cắt khỏi
+# dải vì chúng nằm lẫn giữa các chữ cái và sẽ dán "a×b" thành một token.
+_LATIN_WORD = re.compile(r"[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F\u1E00-\u1EFF]{2,}")
+_STOPWORDS_EN = frozenset("the and of to in for is are with this be on or as by from at "
+                          "that it can not will has have shall must if when each".split())
+_STOPWORDS_VI = frozenset("và của các là trong cho với này được không khi một những để "
+                          "có thể theo từ đến hoặc phải nếu sau trước".split())
+
+
+def readable_ratio(text: str):
+    """Tỉ lệ từ Latin là hư từ thông dụng. None khi không đủ cơ sở để phán.
+
+    Đo trên 35 tài liệu corpus Pytes: file có ToUnicode hỏng đạt 0.001, tài liệu hợp lệ
+    thấp nhất 0.078, tài liệu thường 0.17–0.25 — cách nhau 74 lần.
+
+    Tài liệu song ngữ CJK từng là mối lo và hoá ra không phải: ba file CJK nặng đạt
+    0.20–0.23, vì chúng mang tiếng Anh kèm theo còn ký tự Hán không tính là từ.
+
+    Lấy `max` hai tỉ lệ chứ không cộng, để tài liệu thuần tiếng Việt không bị phạt vì
+    thiếu hư từ tiếng Anh.
+
+    None khi quá ít từ Latin — tài liệu thuần CJK hay Ả Rập rơi vào đây, và người gọi
+    KHÔNG được đọc None thành "đọc được".
+    """
+    toks = [t.lower() for t in _LATIN_WORD.findall(text)]
+    if len(toks) < MIN_READABLE_TOKENS:
+        return None
+    c = Counter(toks)
+    return round(max(sum(c[w] for w in _STOPWORDS_EN),
+                     sum(c[w] for w in _STOPWORDS_VI)) / len(toks), 3)
 
 
 def make_issue(code: str, severity: str, stage: str, detail: str,

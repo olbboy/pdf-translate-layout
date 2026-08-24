@@ -10,17 +10,101 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import sys
 
 import pymupdf
 
-from _common import (ASSETS_DIR, ENGINE_VERSION, BlockingError, Job, layout_model_for,
-                     exit_blocking, load_default_config, make_issue, new_job_id, save_json,
-                     sha256_file, sha256_text, utc_now)
+from _common import (ASSETS_DIR, ENGINE_VERSION, READABLE_RATIO_MIN,
+                     BlockingError, Job, layout_model_for,
+                     exit_blocking, load_default_config, make_issue, new_job_id, readable_ratio,
+                     save_json, sha256_file, sha256_text, utc_now)
 
 AXIS_DIRS = {(1, 0), (0, 1), (-1, 0), (0, -1)}
 STAGE = "preflight"
+
+# Bản in "-Q" nhà máy gửi thường đã convert font thành đường vector, nên trang không còn
+# text object nào. Phân biệt được với trang sơ đồ thuần vì gần như MỌI path đều bé bằng
+# một glyph: đo trên `V16 quick guide final-20251204-Q.pdf` là 105/113, 385/385, 2373/2373.
+GLYPH_MAX_PT = 20.0            # một glyph vẽ ra nhỏ hơn ngần này ở cả hai chiều
+OUTLINED_GLYPH_SHARE = 0.8     # tỉ lệ path cỡ glyph để kết luận là chữ outline
+SIBLING_OPEN_MAX = 12          # số PDF ứng viên được mở ra kiểm, chặn chi phí quét thư mục
+SIBLING_MIN_CHARS = 300        # bản thay thế phải có ngần này ký tự mới coi là còn text layer
+
+_VI_OUTPUT = re.compile(r"_VI\.pdf$|-vi-[0-9a-f]{6,}\.pdf$", re.I)
+
+
+def outlined_glyph_share(drawings: list) -> float:
+    """Tỉ lệ path bé bằng một glyph. Cao = chữ đã convert-to-outline, thấp = sơ đồ thật.
+
+    Đo trên corpus: cả 71 trang vector-suspect đều từ 0.90 trở lên, không có trang nào rơi
+    vào khoảng giữa. Corpus KHÔNG có ca âm tính nào, nên nửa phân biệt của luật này được
+    khoá bằng test tổng hợp trong selftest.py chứ không bằng dữ liệu thật.
+    """
+    if not drawings:
+        return 0.0
+    glyphs = sum(1 for dw in drawings
+                 if dw["rect"].width < GLYPH_MAX_PT and dw["rect"].height < GLYPH_MAX_PT)
+    return glyphs / len(drawings)
+
+
+def _source_key(name: str) -> str:
+    """Khoá so khớp hai bản của cùng một tài liệu, bỏ hậu tố phát hành.
+
+    Bỏ chuỗi số dài (mã phát hành, timestamp), hậu tố `-Q` của bản in, và `(1)` của bản
+    tải lại.
+    """
+    s = re.sub(r"[_\-\s]*\(?\d{6,}\)?", "", os.path.splitext(name)[0])
+    s = re.sub(r"[-_\s]*\(?[Qq]\)?(?=$|[-_\s])", "", s)
+    s = re.sub(r"[-_\s]*\(\d+\)$", "", s)
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def find_editable_source(origin):
+    """Bản PDF khác của cùng tài liệu mà vẫn còn text layer, hoặc None.
+
+    Đo trên 6 file đã chặn job: trúng 1 (`V16 user manual-PYTES 1.0 20251204(1).pdf` thay cho
+    bản `Q 20251021`). Tỉ lệ thấp, nhưng khi trúng thì chi phí xử lý bằng 0 nên vẫn đáng dò.
+
+    Bỏ qua hai thứ dễ nhận nhầm thành nguồn: file `*_VI.pdf` là **đầu ra** đã dịch, và mọi
+    thứ nằm dưới `translation/jobs/` là artifact của job chứ không phải tài liệu gốc.
+    """
+    if not origin or not os.path.isfile(origin):
+        return None
+    key = _source_key(os.path.basename(origin))
+    if len(key) < 8:
+        return None
+    here = os.path.dirname(os.path.abspath(origin))
+    bases = [here] + ([os.path.dirname(here)] if os.path.dirname(here) != here else [])
+    opened, seen = 0, {os.path.abspath(origin)}
+    for base in bases:
+        for dirpath, dirnames, files in os.walk(base):
+            if "translation/jobs" in dirpath.replace(os.sep, "/"):
+                dirnames[:] = []
+                continue
+            if os.path.relpath(dirpath, base).count(os.sep) >= 2:
+                dirnames[:] = []
+            for fn in sorted(files):
+                if not fn.lower().endswith(".pdf") or _VI_OUTPUT.search(fn):
+                    continue
+                full = os.path.abspath(os.path.join(dirpath, fn))
+                if full in seen or not _source_key(fn).startswith(key[:12]):
+                    continue
+                seen.add(full)
+                opened += 1
+                if opened > SIBLING_OPEN_MAX:
+                    return None
+                try:
+                    with pymupdf.open(full) as cand:
+                        chars = sum(len(cand[i].get_text().strip())
+                                    for i in range(min(len(cand), 6)))
+                except Exception:
+                    continue
+                if chars >= SIBLING_MIN_CHARS:
+                    return full
+    return None
+
 
 
 def merge_rects(rects: list, tol: float = 3.0, max_pass: int = 6) -> list:
@@ -96,6 +180,9 @@ def create_or_open_job(args) -> Job:
     meta = {
         "job_id": os.path.basename(job.root),
         "source_name": os.path.basename(args.pdf),
+        # Đường dẫn gốc, KHÔNG nằm trong determinism tuple: chỉ dùng để dò bản
+        # thay thế còn text layer khi nguồn hoá ra là bản in đã outline.
+        "source_origin": os.path.abspath(args.pdf),
         "created_at": utc_now(),
         "status": "INGESTED",
         "page_count": 0,
@@ -125,6 +212,14 @@ def create_or_open_job(args) -> Job:
     return job
 
 
+def meta_origin(job: Job):
+    """Đường dẫn gốc ghi lúc tạo job. None với job cũ tạo trước khi trường này tồn tại."""
+    try:
+        return job.load().get("source_origin")
+    except Exception:
+        return None
+
+
 def inspect(job: Job) -> tuple[str, dict, dict]:
     """Trả về (classification, preflight_report, resource_manifest)."""
     cfg = job.config
@@ -148,7 +243,8 @@ def inspect(job: Job) -> tuple[str, dict, dict]:
 
     pages_report, manifest_pages = [], []
     fonts_agg: dict[tuple, dict] = {}
-    n_scanned = n_vector_suspect = n_texty = 0
+    n_scanned = n_vector_suspect = n_texty = n_outlined = 0
+    text_sample: list[str] = []
 
     for pno in range(doc.page_count):
         page = doc[pno]
@@ -172,16 +268,31 @@ def inspect(job: Job) -> tuple[str, dict, dict]:
 
         scanned = n_chars < 5 and page_area > 0 and img_area / page_area > 0.8
         vector_suspect = n_chars < 5 and not scanned and len(drawings) > 40
+        # Chữ đã convert-to-outline nhận ra được vì gần như mọi path đều bé bằng một glyph.
+        # Trang sơ đồ thuần cũng nhiều vector nhưng path của nó to — hai ca này có tính khả
+        # thi trái ngược nhau nên không được gộp chung một mã lỗi.
+        glyph_share = outlined_glyph_share(drawings)
+        outlined = vector_suspect and glyph_share >= OUTLINED_GLYPH_SHARE
         if scanned:
             n_scanned += 1
+            # Dứt khoát, không để người vận hành phải tự cân nhắc: fit_paint chạy mọi lượt
+            # redaction với PDF_REDACT_IMAGE_NONE và không có đường nào sửa pixel ảnh, nên
+            # chữ dịch sẽ vẽ ĐÈ lên chữ gốc còn nguyên trong ảnh.
             issues.append(make_issue("SCANNED_PAGE", "P1", STAGE,
-                                     "trang chỉ có ảnh scan, không có text layer", page=pno))
+                                     "trang chỉ có ảnh scan — engine không sửa pixel ảnh theo "
+                                     "thiết kế, MANUAL_DTP là đúng", page=pno))
+        elif outlined:
+            n_outlined += 1
+            issues.append(make_issue("OUTLINED_VECTOR_TEXT", "P1", STAGE,
+                                     f"chữ đã convert-to-outline ({glyph_share:.0%} path cỡ "
+                                     "glyph) — xin bản gốc từ nhà cung cấp", page=pno))
         elif vector_suspect:
             n_vector_suspect += 1
             issues.append(make_issue("TEXT_AS_VECTOR_SUSPECT", "P1", STAGE,
                                      "trang nhiều vector, không có text layer", page=pno))
         elif n_chars >= 5:
             n_texty += 1
+            text_sample.append("".join(s["text"] for s in spans))
 
         odd_dirs = dirs - AXIS_DIRS
         if odd_dirs:
@@ -206,6 +317,7 @@ def inspect(job: Job) -> tuple[str, dict, dict]:
             "drawings": len(drawings), "draw_clusters": len(draw_clusters),
             "links": len(links), "annots": len(annots),
             "dirs": sorted(map(list, dirs)), "scanned": scanned, "vector_suspect": vector_suspect,
+            "outlined": outlined,
         })
         manifest_pages.append({
             "page": pno,
@@ -220,6 +332,24 @@ def inspect(job: Job) -> tuple[str, dict, dict]:
                       for ln in links],
             "annots": annots,
         })
+
+    # ToUnicode hỏng: hỏi câu mà không stage nào hỏi — chữ trích ra có đọc được không.
+    # Judged ở mức tài liệu chứ không từng trang: một trang hiếm khi đủ 200 từ Latin.
+    # P1 chứ chưa P0 — mới có một ca dương tính làm bằng chứng, và P1 đã đủ đẩy job sang
+    # SUPPORTED_WITH_REVIEW nên không có bản dịch nào tự phát hành trên nguồn hỏng.
+    ratio = readable_ratio("\n".join(text_sample))
+    if ratio is not None and ratio < READABLE_RATIO_MIN:
+        issues.append(make_issue("MOJIBAKE_TOUNICODE", "P1", STAGE,
+                                 f"text layer không đọc được (tỉ lệ hư từ {ratio}) — ToUnicode "
+                                 "CMap hỏng, sửa nguồn trước khi dịch"))
+
+    # Bản in đã outline thì thường vẫn còn bản gốc ở đâu đó; dò trước khi bắt người ta đi hỏi.
+    if n_outlined:
+        origin = meta_origin(job)
+        alt = find_editable_source(origin)
+        if alt:
+            issues.append(make_issue("EDITABLE_SOURCE_FOUND", "P2", STAGE,
+                                     f"có bản còn text layer, dùng bản này thay vì bản outline: {alt}"))
 
     # Domain context policy — SKILL.md §5.
     if not os.path.exists(job.p("input", "domain_context.md")):

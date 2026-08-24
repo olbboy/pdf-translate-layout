@@ -2195,6 +2195,61 @@ check("vùng không nằm trong ảnh nào thì bỏ qua, không dựng ảnh th
       _obi(_oc, 0, [20, 88, 120, 103], []) is False)
 _oc.close()
 
+# ── preflight: phân loại nguồn (OUTLINED_VECTOR_TEXT / MOJIBAKE_TOUNICODE) ──
+# Ba tình huống "trang không có text layer" có tính khả thi TRÁI NGƯỢC nhau và trước đây
+# dùng chung một mã lỗi, nên người vận hành không biết nên bỏ cuộc hay đi xin bản gốc:
+#   scan raster  → không bao giờ dịch được (fit_paint chạy PDF_REDACT_IMAGE_NONE ở cả 4
+#                  lượt redaction và không có đường nào sửa pixel ảnh)
+#   chữ outline  → về nguyên tắc dịch được, nhưng cần bản gốc hoặc năng lực trích xuất mới
+#   sơ đồ thuần  → đúng là không có chữ, không phải lỗi
+import preflight as _pf
+
+_rect = lambda w, h: {"rect": pymupdf.Rect(0, 0, w, h)}
+_glyphs = [_rect(6, 9)] * 90            # chữ đã convert thành đường
+_diagram = [_rect(180, 120)] * 90       # nét sơ đồ, to hơn glyph nhiều lần
+
+check("chữ outline → tỉ lệ path cỡ glyph cao",
+      _pf.outlined_glyph_share(_glyphs) == 1.0)
+check("sơ đồ thuần → tỉ lệ path cỡ glyph bằng 0",
+      _pf.outlined_glyph_share(_diagram) == 0.0)
+# Corpus không có ca âm tính nào — mọi trang vector-suspect thật đều từ 0.90 trở lên. Ngưỡng
+# và nửa phân biệt của luật vì thế được khoá ở đây chứ không bằng dữ liệu thật.
+check("trang trộn dưới ngưỡng thì KHÔNG phải chữ outline",
+      _pf.outlined_glyph_share(_glyphs[:70] + _diagram[:30]) < _pf.OUTLINED_GLYPH_SHARE,
+      str(_pf.outlined_glyph_share(_glyphs[:70] + _diagram[:30])))
+check("trang gần như toàn glyph thì đúng là chữ outline",
+      _pf.outlined_glyph_share(_glyphs[:85] + _diagram[:15]) >= _pf.OUTLINED_GLYPH_SHARE)
+check("không có nét vẽ nào thì không kết luận outline",
+      _pf.outlined_glyph_share([]) == 0.0)
+
+# ToUnicode hỏng: text layer đọc ra `(XURSHDQ JHQHUDO` trong khi trang hiện `European
+# general`. Round-trip của QA vẫn khớp vì cả hai vế đều là rác giống hệt nhau, nên chỉ có
+# preflight bắt được — và chỉ bằng cách hỏi chữ có đọc được không.
+_shift = lambda t: "".join(chr(ord(c) - 29) if c.isalpha() and c.isascii() else c for c in t)
+_en = "the system shall be installed with this bracket and it can not be used for that "
+_vi = "hệ thống này phải được lắp với giá đỡ và không thể dùng cho việc khác của các "
+check("mojibake rơi dưới ngưỡng", _pf.readable_ratio(_shift(_en) * 30) < _pf.READABLE_RATIO_MIN,
+      str(_pf.readable_ratio(_shift(_en) * 30)))
+check("tiếng Anh bình thường ở rất xa ngưỡng trên", _pf.readable_ratio(_en * 30) > 0.5)
+# Lấy max hai tỉ lệ chứ không cộng: tài liệu thuần tiếng Việt không được bị phạt vì thiếu
+# hư từ tiếng Anh.
+check("tiếng Việt thuần cũng ở xa ngưỡng trên", _pf.readable_ratio(_vi * 30) > 0.5)
+check("quá ít từ Latin thì không phán", _pf.readable_ratio(_en) is None)
+check("tài liệu thuần CJK thì không phán", _pf.readable_ratio("电池系统安装说明书 " * 100) is None)
+
+# Bản in "-Q" và bản gốc phải quy về cùng một khoá; đầu ra `_VI` thì không được coi là nguồn.
+check("bản -Q và bản gốc cùng khoá",
+      _pf._source_key("V16 user manual-PYTES 1.0 20251204(1).pdf").startswith(
+          _pf._source_key("V16 user manual-PYTES 1.0 Q 20251021_1761114635329.pdf")[:12]))
+check("đầu ra _VI bị loại khỏi ứng viên nguồn",
+      bool(_pf._VI_OUTPUT.search("E-Box 48100R guide20251021-Q_VI.pdf")))
+check("bản dịch có hash cũng bị loại",
+      bool(_pf._VI_OUTPUT.search("v16-quick-guide-vi-a1c48a5b.pdf")))
+check("tên tài liệu thật không bị nhầm là đầu ra",
+      not _pf._VI_OUTPUT.search("V16 quick guide final-20251204-Q.pdf"))
+check("không có đường dẫn gốc thì không dò", _pf.find_editable_source(None) is None)
+
+
 print()
 if FAILURES:
     print(f"SELFTEST FAIL ({len(FAILURES)}/{TOTAL}):")
