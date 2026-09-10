@@ -63,6 +63,39 @@ _ADDR_CITY_RE = re.compile(rf"{_ADDR_STRUCT}\b[,，]\s*(?:\d+\s+)?([A-Z][A-Za-z]
 _ADDR_TOKEN_RE = re.compile(r"[A-Za-z]{2,}|\d+")
 
 
+# Rác của MODEL lọt vào bản dịch: thẻ suy luận, bao markdown, câu dẫn kiểu "Here is the
+# translation:". Người dịch của skill này CHÍNH LÀ một model suy luận (§1.6) nên đây là rủi
+# ro thật, không phải giả định: zotero-pdf-translate gặp đúng lỗi này và phải gỡ `<think>`
+# ở phía client. Khác biệt về hậu quả quyết định cách xử lý — ở đó rác hiện trong một popup
+# đọc tạm, ở đây nó đi thẳng qua fit_paint và ĐƯỢC VẼ LÊN trang của file giao khách. Gate 3
+# không bắt được: nó kiểm target CÓ MẶT trong output, mà rác thì đúng là có mặt.
+# Vì vậy REJECT chứ không gỡ thầm — gỡ thầm là che việc provider không tuân prompt, và §1
+# cấm mọi fallback im lặng.
+_ARTIFACT_PATTERNS = (
+    ("thẻ suy luận", re.compile(r"</?(?:think|thinking|reasoning|scratchpad|answer)\b[^>]*>",
+                                re.I)),
+    ("bao markdown", re.compile(r"```")),
+    ("câu dẫn của model",
+     re.compile(r"\A\s*(?:here(?:'s| is)\b[^:\n]{0,40}:"
+                r"|(?:bản dịch|translation|translated|translate|dịch)\s*:)", re.I)),
+)
+
+
+def llm_artifact(source: str, target: str) -> tuple[str, str] | None:
+    """→ (nhãn, chuỗi khớp) nếu target mang rác của model mà source KHÔNG có; None nếu không.
+
+    Đối chiếu với source thay vì cấm tuyệt đối — cùng nguyên tắc `digit_drift`/`symbol_drift`:
+    chỉ báo phần XUẤT HIỆN THÊM ở target. Bản gốc thật sự in "Translation:" thì bản dịch
+    mang lại nhãn ấy là đúng, không phải rác. Câu dẫn chỉ tính khi nằm ở ĐẦU chuỗi: "bản
+    dịch:" giữa một đoạn văn là nội dung bình thường.
+    """
+    for label, pat in _ARTIFACT_PATTERNS:
+        m = pat.search(target)
+        if m and not pat.search(source):
+            return label, m.group(0).strip()
+    return None
+
+
 def carry_through(source: str, target: str) -> tuple[int, int] | None:
     """→ (số từ chép nguyên, số từ tiếng Việt) nếu target chủ yếu là tiếng Anh chép từ
     source; None nếu không.
@@ -206,7 +239,7 @@ def validate(job: Job) -> None:
     auth = authenticity_cfg(cfg)
     target_lang = cfg["languages"]["target"]
     issues: list[dict] = []
-    n_ok = n_fail = n_drift = n_neg = n_sym = n_trunc = n_carry = n_spec = 0
+    n_ok = n_fail = n_drift = n_neg = n_sym = n_trunc = n_carry = n_spec = n_artifact = 0
     seen: set[str] = set()
     # Authenticity theo TRẠNG THÁI CUỐI của từng region — không đếm theo dòng.
     # Workflow chuẩn cho phép append bản sửa (bản sau ghi đè bản trước): dòng cũ
@@ -240,6 +273,15 @@ def validate(job: Job) -> None:
         target_pl = "".join(r["text"] for r in runs)
         if not target_pl.strip():
             fail("EMPTY_TARGET", "target rỗng — chỉ reviewer được quyết định delete (spec §5.6)")
+            n_fail += 1; continue
+
+        art = llm_artifact(req["source_text"], target_pl)
+        if art:
+            n_artifact += 1
+            fail("LLM_ARTIFACT",
+                 f"target chứa {art[0]} mà source không có: {art[1][:40]!r} — rác suy luận/"
+                 "định dạng của model lọt vào bản dịch, engine sẽ VẼ nguyên nó lên trang. "
+                 "Dịch lại region này và chỉ trả về chữ đích")
             n_fail += 1; continue
 
         req_roles = set(req["style_roles"])
@@ -364,6 +406,33 @@ def validate(job: Job) -> None:
             }
             n_ok += 1
 
+    # Fan-out bản dịch dùng lại: translate_prep gộp các region trùng hệt chữ nguồn vào MỘT
+    # request, region còn lại mang `reuse_of` và không có dòng response nào.
+    #
+    # Chép ở ĐÂY chứ không ở fit_paint, vì mọi thứ hạ nguồn đọc `regions.json`: Gate 1 đòi
+    # region `translate` phải có target, Gate 2 đo LẠI authenticity trên từng region, Gate 3
+    # đọc lại chữ từ output. Bản chép phải hiện diện như một bản dịch thật thì các gate đó
+    # mới kiểm chứng nó độc lập — gộp làm giảm số lần gọi model, KHÔNG giảm số lần kiểm.
+    n_reuse = 0
+    for rid, reg in regions.items():
+        rep = regions.get(reg.get("reuse_of") or "")
+        if not rep or "target_runs" not in rep:
+            continue        # đại diện bị reject / chưa dịch → region này vẫn pending, đúng
+        reg["target_runs"] = [dict(r) for r in rep["target_runs"]]
+        # Restore bằng bảng placeholder CỦA CHÍNH region này. `reuse_key` đã đòi hai bảng
+        # trùng nhau, nhưng dựng lại từ bảng của chính nó thì bất biến ấy có hỏng cũng không
+        # biến thành ký tự ⟦…⟧ vẽ lên trang.
+        mapping = reg.get("placeholders", {})
+        reg["target_text"] = nfc(PH_RE.sub(
+            lambda m: mapping.get(m.group(1), m.group(0)),
+            "".join(r["text"] for r in reg["target_runs"])))
+        reg["translation_meta"] = {**rep["translation_meta"],
+                                   # source_hash của CHÍNH nó, nếu không STALE_TRANSLATION
+                                   # báo oan mọi bản chép.
+                                   "source_hash": reg.get("source_hash"),
+                                   "reused_from": rep["region_id"]}
+        n_reuse += 1
+
     # Phát per-region authenticity issue theo trạng thái cuối (sau mọi ghi đè).
     n_ident = n_lang = 0
     for rid, (flag, page) in auth_flags.items():
@@ -478,7 +547,11 @@ def validate(job: Job) -> None:
                                           ("address_translated", n_entity),
                                           ("spec_grid_dropped", n_spec)) if v]
     warn_note = (" " + " ".join(warn_bits)) if warn_bits else ""
-    print(f"validate: ok={n_ok} fail={n_fail} pending={len(pending)}{warn_note}")
+    reuse_note = f" reused={n_reuse}" if n_reuse else ""
+    print(f"validate: ok={n_ok}{reuse_note} fail={n_fail} pending={len(pending)}{warn_note}")
+    if n_artifact:
+        print(f"  LLM_ARTIFACT: {n_artifact} region có rác suy luận/định dạng của model "
+              "trong bản dịch — dịch lại, chỉ trả về chữ đích")
     if n_carry:
         print(f"  P0 TRANSLATION_CARRY_THROUGH: {n_carry} region giữ nguyên tiếng Anh của "
               "source (find-replace, §1.6) — KHÔNG phát hành được cho tới khi dịch lại")

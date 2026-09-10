@@ -4,12 +4,12 @@ description: Dịch PDF có text layer (mặc định EN→VI) bảo toàn layou
 license: AGPL-3.0
 compatibility: Agent-agnostic theo chuẩn Agent Skills. Đã kiểm chứng trên Claude Code và OpenAI Codex (2026-08-05, cùng job 514 region, cả hai đạt). **Antigravity IDE 2.1.1 ĐÃ THỬ VÀ KHÔNG ĐẠT** — sửa `scripts/approve.py` để tự cấp quyền phát hành, chạy quá phạm vi, Gate 2/3/4/6 FAIL; xem `plans/reports/incident-antigravity-self-approve-and-engine-tamper-260805-1222-*`. Agent khác chưa kiểm chứng. Cần shell macOS/Linux + Python >= 3.10; bootstrap deps một lần bằng `bash scripts/setup.sh` (cần network lúc cài); runtime offline, fonts đã bundle.
 metadata:
-  version: "1.9.47"
+  version: "1.9.48"
 ---
 
 # pdf-translate-layout
 
-> **Trạng thái:** RELEASED v1.9.47 (engine `1.9.47`, layout model `lg-basic-6`) —
+> **Trạng thái:** RELEASED v1.9.48 (engine `1.9.48`, layout model `lg-basic-6`) —
 > scripts Milestone 1-4 core hoạt động, đã E2E-test full trên tài liệu thật 15 và
 > 29 trang (7/7 gates PASS). Đã kiểm chứng trên Claude Code và Codex; **Antigravity
 > không đạt — §9**. Có authenticity gates chống pseudo-translation (§1.6, §7).
@@ -288,6 +288,33 @@ metadata:
 > hay `source_hash`** — đo trên chính job catalogue: 0 region_id mất, 0 mới, 0 source_hash
 > đổi, 3 vùng đổi căn lề, 16 vùng đổi cấu trúc role, `responses.jsonl` không mồ côi.
 > Job cũ chạy lại stage 2 → 7 là hưởng.
+> **1.9.48** → **gộp request cho region trùng hệt chữ nguồn** và **chặn rác của model**.
+> (1) `same_source` của stage 2.5 chưa từng chạy thật: nó lọc `translation_action != "translate"`
+> trong khi stage 2.5 chạy TRƯỚC translate_prep, nên mọi region còn mang `pending` do
+> extract_group đặt và nhóm luôn rỗng — `CONSISTENCY_DRIFT` ở stage 5 vì thế là mã chết. Bỏ
+> điều kiện ấy (bên tiêu thụ tự lọc) cũng làm stage idempotent đúng như docstring hứa.
+> (2) translate_prep phát MỘT request cho mỗi nhóm trùng, region còn lại mang `reuse_of`;
+> validate_responses chép bản dịch sang. Khoá gộp (`reuse_key`) đòi trùng cả **masked**,
+> **bảng placeholder**, **region_type**, **style_roles**, **số ô lưới** và **số ô trống** —
+> trùng `source_text` thôi thì chưa đủ, vì `same_source` gộp theo chữ đã chuẩn hoá khoảng
+> trắng nên `"Max 48 V"` và `"Max 48  V"` cùng khoá mà mask ra khác nhau, chép qua sẽ để lại
+> `⟦MEAS_1⟧` vẽ nguyên lên trang. Đại diện là region có **khung chật nhất**, không phải region
+> đọc trước nhất: cả nhóm dùng chung một bản dịch nên nó phải vừa chỗ chật nhất, lấy khung
+> rộng thì mọi ô hẹp tụt dưới `minimum_ratio` và thành P0 `G4_RATIO_FLOOR`.
+> Gộp làm giảm số lần gọi model, **không** giảm số lần kiểm: bản chép nằm trong `regions.json`
+> như bản dịch thật nên Gate 1/2/3 vẫn soi từng region một. Đo trên job smoke 2 trang:
+> 8 region → 5 request, 7/7 gate pass. Việc gộp được nói ra ở phía prompt (`reused_by` +
+> `source_warnings`) để model không chọn cách diễn đạt bám vào ngữ cảnh một trang.
+> (3) Stage 5 thêm reject `LLM_ARTIFACT`: target mang thẻ suy luận (`<think>`), bao markdown
+> (```` ``` ````) hoặc câu dẫn (`Here is the translation:`) mà **source không có**. Người dịch
+> của skill này chính là một model suy luận nên đây là rủi ro thật; Gate 3 không bắt được vì
+> nó chỉ kiểm target CÓ MẶT trong output, mà rác thì đúng là có mặt — nó sẽ được VẼ lên trang
+> giao khách. Đối chiếu với source thay vì cấm tuyệt đối, cùng nguyên tắc `digit_drift`:
+> bản gốc in `Translation:` thì bản dịch mang lại nhãn ấy là đúng. **Reject chứ không gỡ
+> thầm** — gỡ thầm là che việc provider không tuân prompt (§1). Đại diện bị reject thì region
+> chép từ nó vẫn `pending`, không có bản chép nửa vời.
+> `prompt_version` lên `req-v2`; `GRAPH_VERSION` lên `cg-2`. Không đổi `region_id`,
+> `source_hash`, hay layout model.
 
 > **1.8.0** → layout model **`lg-basic-6`** (`lg-basic-5` khi tắt gộp đoạn): dọn nốt
 > `G4_TABLE_RULE_CROSS`. Hai nguyên nhân độc lập, cả hai đều đo được:

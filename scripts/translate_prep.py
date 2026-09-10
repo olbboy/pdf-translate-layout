@@ -120,6 +120,65 @@ def classify_action(reg: dict, keep_terms_ci: set, mapping_len: int, masked: str
     return "translate", ""
 
 
+def reuse_key(reg: dict, masked: str, mapping: dict) -> tuple:
+    """Khoá gộp request: hai region chỉ được dùng CHUNG một bản dịch khi mọi thứ quyết định
+    nội dung và hình dạng của response đều trùng nhau.
+
+    Trùng `source_text` thôi thì chưa đủ. `same_source` gộp theo chữ ĐÃ CHUẨN HOÁ khoảng
+    trắng, nên hai region cùng khoá vẫn có thể mask ra bảng placeholder khác nhau; chép bản
+    dịch qua sẽ để lại `⟦MEAS_1⟧` không tra được và engine VẼ nguyên ký tự đó lên trang.
+    `style_roles` phải trùng, nếu không bản chép mang role lạ (`UNKNOWN_ROLE`). Số ô lưới
+    thông số và số ô trống phải trùng, nếu không hợp đồng đếm `\n` vỡ (`SPEC_GRID_DROPPED`).
+    """
+    return (masked,
+            tuple(sorted(mapping.items())),
+            reg["region_type"],
+            tuple(sorted({r["role"] for r in reg.get("runs") or []})),
+            len(reg.get("spec_cells") or []),
+            len(reg.get("fill_rules") or []))
+
+
+def container_area(reg: dict) -> float:
+    c = reg["container"]
+    return max(0.0, c[2] - c[0]) * max(0.0, c[3] - c[1])
+
+
+def build_reuse_map(regions: list[dict], prepped: dict,
+                    same_source: dict[str, list[str]]) -> dict[str, str]:
+    """→ {region phụ thuộc: region đại diện}. Chỉ region `translate` mới được gộp.
+
+    Đại diện là region có KHUNG NHỎ NHẤT trong nhóm, không phải region đọc trước nhất: cả
+    nhóm dùng chung một bản dịch nên bản dịch ấy phải vừa chỗ chật nhất, và `length_guidance`
+    của request đại diện chính là khung chật nhất đó. Lấy khung rộng hơn thì mọi ô hẹp trong
+    nhóm tụt xuống dưới `fonts.minimum_ratio` và thành P0 `G4_RATIO_FLOOR` — dồn công việc
+    sang gate thay vì giải quyết ở đây.
+
+    Khoá sắp xếp có `region_id` ở cuối để hai region trùng cả diện tích lẫn thứ tự đọc vẫn
+    cho ra cùng một đại diện ở mọi lần chạy (job phải reproduce được, §3).
+    """
+    by_id = {r["region_id"]: r for r in regions}
+    out: dict[str, str] = {}
+    for rids in same_source.values():
+        buckets: dict[tuple, list[str]] = {}
+        for rid in rids:
+            reg = by_id.get(rid)
+            if reg is None:
+                continue
+            _src, masked, mapping, action, _kc = prepped[rid]
+            if action != "translate":
+                continue
+            buckets.setdefault(reuse_key(reg, masked, mapping), []).append(rid)
+        for group in buckets.values():
+            if len(group) < 2:
+                continue
+            rep = min(group, key=lambda r: (round(container_area(by_id[r]), 3),
+                                            by_id[r]["page"], by_id[r]["reading_index"], r))
+            for rid in group:
+                if rid != rep:
+                    out[rid] = rep
+    return out
+
+
 def prep(job: Job) -> None:
     model = load_json(job.p("model", "regions.json"))
     if not model:
@@ -145,6 +204,7 @@ def prep(job: Job) -> None:
     graph = load_json(job.p("model", "context_graph.json"), {}) or {}
     chain_by_id = {c["chain_id"]: c for c in graph.get("chains", [])}
     under_heading = graph.get("under_heading", {})
+    same_source = graph.get("same_source") or {}
     co_figure_of: dict[str, list[str]] = {}
     for e in graph.get("edges", []):
         if e["type"] == "co_figure":
@@ -153,6 +213,21 @@ def prep(job: Job) -> None:
 
     req_path = job.p("translation", "requests.jsonl")
     open(req_path, "w").close()  # idempotent re-run: ghi lại từ đầu
+
+    # Pass 1 — mask + phân loại cho MỌI region trước khi phát request nào. Bảng gộp phải
+    # thấy trọn nhóm mới chọn được đại diện, mà đại diện lại quyết định request nào được
+    # phát; làm một pass thì phải quyết định ngay khi mới gặp region đầu tiên của nhóm.
+    # Rẻ: `protect` + `classify_action` thuần regex, không đụng file.
+    prepped: dict[str, tuple] = {}
+    for reg in regions:
+        src = nfc(reg["source_text"])
+        masked, mapping = protect(src, keep_terms)
+        action, keep_class = classify_action(reg, keep_terms_ci, len(mapping), masked)
+        prepped[reg["region_id"]] = (src, masked, mapping, action, keep_class)
+    reuse_of = build_reuse_map(regions, prepped, same_source)
+    reused_by: dict[str, list[str]] = {}
+    for _rid, _rep in reuse_of.items():
+        reused_by.setdefault(_rep, []).append(_rid)
 
     # heading gần nhất theo reading order từng trang
     last_heading: dict[int, str] = {}
@@ -169,10 +244,12 @@ def prep(job: Job) -> None:
             cur_batch = []
 
     for reg in regions:
-        src = nfc(reg["source_text"])
-        masked, mapping = protect(src, keep_terms)
-        action, keep_class = classify_action(reg, keep_terms_ci, len(mapping), masked)
+        rid = reg["region_id"]
+        src, masked, mapping, action, keep_class = prepped[rid]
         reg["translation_action"] = action
+        # Chạy lại stage này sau khi đổi layout model có thể làm nhóm khác đi; cờ cũ còn sót
+        # sẽ khiến validate chép bản dịch của một đại diện không còn tồn tại.
+        reg.pop("reuse_of", None)
         if keep_class:
             reg["keep_class"] = keep_class
         if reg["region_type"] == "heading":
@@ -186,6 +263,13 @@ def prep(job: Job) -> None:
 
         reg["placeholders"] = unwrap_tokens(mapping)
         reg["source_masked"] = masked
+
+        # Region trùng hệt một region khác: không phát request, không vào batch.
+        # `validate_responses` chép bản dịch của đại diện sang. Action vẫn là `translate`
+        # nên mọi gate hạ nguồn (Gate 1/2/3, drift, authenticity) soi nó như bản dịch thật.
+        if rid in reuse_of:
+            reg["reuse_of"] = reuse_of[rid]
+            continue
 
         warnings = []
         m_adj = PH_DIGIT_ADJ.search(masked)
@@ -227,6 +311,19 @@ def prep(job: Job) -> None:
                 f"engine đặt từng đoạn vào đúng cột của nó. Lưới nguồn:\n" + grid
                 + "\nGộp hai ô vào một đoạn sẽ làm cả khối dồn về cột trái.")
 
+        # Đại diện của một nhóm gộp: model phải biết bản dịch này sẽ đi tới đâu nữa, nếu
+        # không nó chọn cách diễn đạt bám vào ngữ cảnh của đúng một trang. Đây là cái giá
+        # của việc gộp, và cách duy nhất trả giá đó là nói ra ở phía prompt.
+        followers = reused_by.get(rid, [])
+        if followers:
+            f_pages = sorted({by_id[f]["page"] for f in followers if f in by_id})
+            warnings.append(
+                f"Bản dịch của region này được DÙNG LẠI nguyên văn cho {len(followers)} "
+                f"region khác trùng hệt chữ nguồn (trang "
+                f"{', '.join(str(x) for x in f_pages)}). Chọn cách diễn đạt đúng ở MỌI chỗ "
+                "đó, đừng bám vào ngữ cảnh riêng của trang này. `length_guidance` bên dưới "
+                "đã lấy theo khung CHẬT NHẤT của cả nhóm.")
+
         # context per spec §6.6
         idx = reg["reading_index"]
         same_page = [r for r in regions if r["page"] == reg["page"]]
@@ -266,6 +363,7 @@ def prep(job: Job) -> None:
             "source_text": masked,
             "source_warnings": warnings,
             "placeholders": sorted(mapping.keys()),
+            "reused_by": followers,
             "style_roles": sorted({r["role"] for r in reg["runs"]}),
             "context": {
                 "heading": last_heading.get(reg["page"], "") or under_heading.get(reg["region_id"], ""),
@@ -312,26 +410,31 @@ def prep(job: Job) -> None:
 
     n_keep = sum(1 for r in regions if r["translation_action"] == "keep")
     n_manual = sum(1 for r in regions if r["translation_action"] == "manual")
+    n_reuse = len(reuse_of)
+    reuse_note = (f" {n_reuse} region trùng hệt chữ nguồn đã được gộp vào các request này "
+                  f"(xem `reused_by`), nên số request nhỏ hơn số region cần dịch."
+                  if n_reuse else "")
     with open(job.p("translation", "AGENT_INSTRUCTIONS.md"), "w", encoding="utf-8") as f:
         f.write(AGENT_INSTRUCTIONS.format(
-            n=n_requests, batches=len(batches),
+            n=n_requests, batches=len(batches), reuse=reuse_note,
             src=cfg["languages"]["source"], tgt=cfg["languages"]["target"],
             domain=domain_context.strip() or "(không có — dịch trung tính, kỹ thuật)"))
     job.mark_stage(STAGE)
     job.log_event(STAGE, "info", "PREPPED",
-                  f"requests={n_requests} keep={n_keep} manual={n_manual} batches={len(batches)}")
+                  f"requests={n_requests} reused={n_reuse} keep={n_keep} manual={n_manual} "
+                  f"batches={len(batches)}")
     job.write_summary(
-        f"Agent dịch {n_requests} regions theo `translation/AGENT_INSTRUCTIONS.md` "
-        f"({len(batches)} batches), ghi `translation/responses.jsonl`, "
-        f"rồi chạy `validate_responses.py --job <job>`.")
-    print(f"translate_prep: {n_requests} requests, {n_keep} keep, "
+        f"Agent dịch {n_requests} requests theo `translation/AGENT_INSTRUCTIONS.md` "
+        f"({len(batches)} batches, phủ {n_requests + n_reuse} region), ghi "
+        f"`translation/responses.jsonl`, rồi chạy `validate_responses.py --job <job>`.")
+    print(f"translate_prep: {n_requests} requests ({n_reuse} region gộp), {n_keep} keep, "
           f"{n_manual} manual, {len(batches)} batches")
 
 
 AGENT_INSTRUCTIONS = """# Hướng dẫn dịch cho agent (prompt_version: req-v1)
 
 Dịch {src} → {tgt}. Có {n} requests trong `requests.jsonl`, chia {batches} batches
-(`batches.json`). Với MỖI request, append một dòng JSON vào `responses.jsonl`:
+(`batches.json`).{reuse} Với MỖI request, append một dòng JSON vào `responses.jsonl`:
 
 ```json
 {{"region_id": "...", "target_runs": [{{"role": "body", "text": "..."}}],
@@ -372,6 +475,11 @@ Quy tắc bắt buộc (validator sẽ reject nếu vi phạm):
    trật tự tiếng Việt rồi chia dòng, KHÔNG dịch từng dòng máy móc.
    **Placeholder phải ở lại đúng region gốc của nó** — không chuyển ⟦TOKEN⟧ sang mảnh khác.
    `context.co_figure` là các nhãn anh em cùng hình: đọc để không gán nhầm nghĩa của nhau.
+7c. **`reused_by`** (nếu không rỗng) — bản dịch của request này sẽ được chép NGUYÊN VĂN
+   cho ngần ấy region khác trùng hệt chữ nguồn ở chỗ khác trong tài liệu. Chọn cách diễn
+   đạt đúng ở MỌI chỗ đó, đừng bám vào ngữ cảnh riêng của một trang; `source_warnings` liệt
+   kê các trang liên quan. Những region ấy KHÔNG có request riêng — đừng tự thêm dòng cho
+   chúng vào `responses.jsonl` (sẽ thành `ORPHAN_RESPONSE`), engine tự chép.
 8. **MỌI bản dịch phải do model của session sinh ra, cho TỪNG request.** CẤM mọi
    logic dịch nằm trong code: dictionary/bảng tra cứu tự chế, find-replace, hay
    fallback copy-source. Script (nếu dùng) CHỈ được là phương tiện GHI các bản

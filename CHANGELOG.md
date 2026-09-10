@@ -4,6 +4,65 @@ All notable changes to this project are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org/).
 
+## [1.9.48] - 2026-09-10
+
+### Added
+
+- **One request per repeated source region.** Technical manuals repeat the same short label
+  many times — table headers, `Battery Module`, safety captions. Stage 3 now emits a single
+  request per group of regions whose source text is identical, and stage 5 copies that
+  translation to the rest. Fewer model calls, and terminology drift between copies becomes
+  structurally impossible instead of merely detected.
+
+  The grouping key is deliberately stricter than "same text". Two regions share a
+  translation only when the **masked** text, the **placeholder table**, the `region_type`,
+  the `style_roles`, the spec-grid cell count and the fill-in blank count all match.
+  `same_source` groups on whitespace-normalised text, so `"Max 48 V"` and `"Max 48  V"` land
+  in one group while masking differently — copying across them would leave a literal
+  `⟦MEAS_1⟧` painted on the page.
+
+  The representative is the region with the **smallest container**, not the first one in
+  reading order. One translation serves the whole group, so it has to fit the tightest box;
+  picking a wider one drops every narrow member below `fonts.minimum_ratio` and turns them
+  into non-waivable `G4_RATIO_FLOOR` P0s.
+
+  Grouping reduces how often the model is called, **not** how often the result is checked:
+  each copy lands in `regions.json` as a real translation, so Gate 1/2/3 still verify every
+  region independently, and Gate 2 recomputes authenticity across the full set. The request
+  says so out loud (`reused_by` plus a `source_warnings` entry naming the other pages) so
+  the model does not pick wording that only works on one page.
+
+- **`LLM_ARTIFACT` reject rule (stage 5).** A target carrying a reasoning tag (`<think>`),
+  a markdown fence, or a lead-in (`Here is the translation:`) that the **source does not
+  have** is now rejected. The translator for this skill is itself a reasoning model, so this
+  is a real failure mode, not a hypothetical one; Gate 3 cannot catch it because it checks
+  that the target is *present* in the output, and the junk is present. Left alone it is
+  painted onto the delivered page.
+
+  The comparison against source follows the same principle as `digit_drift` and
+  `symbol_drift` — only report what appears *extra* in the target. A source that genuinely
+  prints `Translation:` keeps its label. The rule **rejects** rather than silently strips:
+  stripping would hide a provider ignoring the prompt, which §1 forbids. When a
+  representative is rejected, the regions that would copy from it stay pending — no
+  half-applied copy.
+
+### Fixed
+
+- **`same_source` never ran.** `build_context_graph` (stage 2.5) filtered on
+  `translation_action != "translate"`, but that field is only set by `translate_prep`
+  (stage 3); at stage 2.5 every region still carries the `pending` value written by
+  `extract_group`. The group map was therefore always empty on a fresh run, which made the
+  `CONSISTENCY_DRIFT` lint in stage 5 dead code. Dropping the filter also makes the stage
+  idempotent as its docstring promises: re-running it after stage 3 now yields the same
+  groups as the first run. Consumers filter for themselves — stage 3 groups only
+  `translate` regions, the lint compares only regions that have a translation.
+
+### Changed
+
+- `prompt_version` default `req-v1` → `req-v2` (request schema and agent instructions
+  changed). `GRAPH_VERSION` `cg-1` → `cg-2`. Jobs that froze an earlier config keep their
+  own values. No change to `region_id`, `source_hash`, or the layout model.
+
 ## [1.9.47] - 2026-08-12
 
 ### Added

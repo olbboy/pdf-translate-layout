@@ -74,7 +74,9 @@ translation:
   batch_max_regions: 20
   # Agent-neutral placeholder; agent truyền model id thật qua `preflight.py --provider-model`.
   provider_model_version: in-session
-  prompt_version: req-v1
+  # req-v2 (1.9.48): request có `reused_by` + luật 7c (bản dịch được chép nguyên văn
+  # sang các region trùng hệt chữ nguồn). Job đóng băng trước đó giữ req-v1.
+  prompt_version: req-v2
   # Chống pseudo-translation (sự cố 2026-08-04: agent sinh responses bằng script
   # dictionary → 76% chưa dịch). Vượt ngưỡng → P0, không waive được.
   authenticity:

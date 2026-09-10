@@ -790,6 +790,110 @@ check("nhận diện tiêu đề đánh số", _cg.is_heading_like("5.3.2  Conne
 check("soft_end phân biệt câu kết và câu lửng",
       _cg.soft_end("developed and produced") and not _cg.soft_end("energy storage systems."))
 
+# ── gộp region trùng chữ nguồn (1.9.48) ─────────────────────────────────────────
+# `same_source` phải dựng được NGAY LẦN CHẠY ĐẦU. Stage 2.5 chạy trước translate_prep nên
+# mọi region còn mang action `pending` do extract_group đặt; bản cũ lọc `!= "translate"`
+# khiến nhóm luôn rỗng, và `CONSISTENCY_DRIFT` ở stage 5 chưa từng chạy thật.
+def _pend(rid, page, text, ri=0, rtype="table_cell"):
+    r = _reg(rid, page, rtype, text, (40, 100, 120, 112), ri=ri)
+    r["translation_action"] = "pending"
+    return r
+
+
+_ss = _cg.same_source_groups([_pend("r1", 3, "Battery Module"),
+                              _pend("r2", 9, "Battery Module", ri=1),
+                              _pend("r3", 9, "Rated Voltage", ri=2)], set())
+check("same_source gộp được khi action còn pending",
+      _ss.get("Battery Module") == ["r1", "r2"] and "Rated Voltage" not in _ss, str(_ss))
+check("region nằm trong chuỗi bị loại khỏi same_source",
+      _cg.same_source_groups([_pend("r1", 3, "Battery Module"),
+                              _pend("r2", 9, "Battery Module", ri=1)], {"r2"}) == {})
+check("chữ quá ngắn hoặc quá dài không gộp",
+      _cg.same_source_groups([_pend("a", 1, "V"), _pend("b", 2, "V", ri=1),
+                              _pend("c", 1, "x" * 90), _pend("d", 2, "x" * 90, ri=1)],
+                             set()) == {})
+
+import translate_prep as _tp
+
+
+def _rr(rid, page, text, container, ri=0, rtype="table_cell", role="body"):
+    return {"region_id": rid, "page": page, "region_type": rtype, "source_text": text,
+            "container": list(container), "reading_index": ri,
+            "runs": [{"size": 9.0, "role": role}]}
+
+
+def _prep_of(regs):
+    return {r["region_id"]: (r["source_text"], r["source_text"], {}, "translate", "")
+            for r in regs}
+
+
+# Đại diện phải là khung CHẬT NHẤT: cả nhóm dùng chung một bản dịch, lấy khung rộng thì mọi
+# ô hẹp trong nhóm tụt dưới `fonts.minimum_ratio` và thành P0 G4_RATIO_FLOOR.
+_wide = _rr("w", 2, "Battery Module", (0, 0, 200, 20))
+_narrow = _rr("n", 7, "Battery Module", (0, 0, 90, 20), ri=1)
+check("đại diện là region có khung chật nhất",
+      _tp.build_reuse_map([_wide, _narrow], _prep_of([_wide, _narrow]),
+                          {"Battery Module": ["w", "n"]}) == {"w": "n"})
+
+# Hoà cả diện tích lẫn thứ tự đọc → `region_id` phá hoà, đại diện không đổi theo thứ tự đầu
+# vào (job phải reproduce được).
+_z = _rr("z", 5, "Rated Voltage", (0, 0, 90, 20), ri=3)
+_a = _rr("a", 5, "Rated Voltage", (0, 0, 90, 20), ri=3)
+check("đại diện ổn định khi hoà phiếu",
+      _tp.build_reuse_map([_z, _a], _prep_of([_z, _a]), {"Rated Voltage": ["z", "a"]})
+      == _tp.build_reuse_map([_a, _z], _prep_of([_a, _z]), {"Rated Voltage": ["a", "z"]})
+      == {"z": "a"})
+
+# Cùng khoá `same_source` (khoảng trắng đã chuẩn hoá) mà mask ra khác nhau: chép bản dịch
+# qua sẽ để lại ⟦MEAS_1⟧ không tra được và engine vẽ nguyên ký tự đó lên trang.
+_msk1, _map1 = _tp.protect("Max 48 V", [])
+_msk2, _map2 = _tp.protect("Max 48  V", [])
+_g1 = _rr("g1", 2, "Max 48 V", (0, 0, 90, 20))
+_g2 = _rr("g2", 7, "Max 48  V", (0, 0, 90, 20), ri=1)
+check("cùng khoá same_source nhưng mask khác nhau thì KHÔNG gộp",
+      _msk1 != _msk2 and _tp.build_reuse_map(
+          [_g1, _g2], {"g1": ("Max 48 V", _msk1, _map1, "translate", ""),
+                       "g2": ("Max 48  V", _msk2, _map2, "translate", "")},
+          {"Max 48 V": ["g1", "g2"]}) == {}, f"{_msk1!r} vs {_msk2!r}")
+
+_h = _rr("h", 2, "Battery Module", (0, 0, 90, 20), rtype="heading")
+_c = _rr("c", 7, "Battery Module", (0, 0, 90, 20), ri=1)
+check("khác region_type thì không gộp",
+      _tp.build_reuse_map([_h, _c], _prep_of([_h, _c]), {"Battery Module": ["h", "c"]}) == {})
+
+# Khác style_roles thì bản chép mang role lạ → UNKNOWN_ROLE ở stage 5.
+_sb = _rr("sb", 2, "Battery Module", (0, 0, 90, 20), role="body")
+_sl = _rr("sl", 7, "Battery Module", (0, 0, 90, 20), ri=1, role="label")
+check("khác style_roles thì không gộp",
+      _tp.build_reuse_map([_sb, _sl], _prep_of([_sb, _sl]),
+                          {"Battery Module": ["sb", "sl"]}) == {})
+
+_k1 = _rr("k1", 2, "12 V", (0, 0, 90, 20))
+_k2 = _rr("k2", 7, "12 V", (0, 0, 90, 20), ri=1)
+_kp = {r: ("12 V", "⟦MEAS_1⟧", {"MEAS_1": "12 V"}, "keep", "protected_only")
+       for r in ("k1", "k2")}
+check("region keep không bị gộp",
+      _tp.build_reuse_map([_k1, _k2], _kp, {"12 V": ["k1", "k2"]}) == {})
+
+# ── rác của model lọt vào bản dịch (1.9.48) ─────────────────────────────────────
+# Người dịch của skill này là một model suy luận, nên `<think>` rò rỉ là rủi ro thật; ở đây
+# nó đi thẳng qua fit_paint và ĐƯỢC VẼ lên trang giao khách. Gate 3 không bắt được vì nó
+# chỉ kiểm target CÓ MẶT trong output — mà rác thì đúng là có mặt.
+from validate_responses import llm_artifact as _art
+
+check("thẻ suy luận trong target bị bắt",
+      (_art("Battery Module", "<think>hmm</think>Mô-đun pin") or ("",))[0] == "thẻ suy luận")
+check("câu dẫn của model bị bắt",
+      (_art("Battery Module", "Here is the translation: Mô-đun pin")
+       or ("",))[0] == "câu dẫn của model")
+check("bao markdown bị bắt", _art("Battery Module", "```json") is not None)
+check("bản dịch sạch không bị báo", _art("Battery Module", "Mô-đun pin") is None)
+# Đối chiếu với source thay vì cấm tuyệt đối — cùng nguyên tắc digit_drift/symbol_drift.
+check("nhãn có thật trong nguồn thì không phải rác",
+      _art("Translation:", "Bản dịch:") is None)
+check("'bản dịch:' giữa câu không phải câu dẫn",
+      _art("See note", "Xem ghi chú về bản dịch: trang 5") is None)
+
 # ── gộp dòng thành đoạn, lg-basic-4 (G3) ────────────────────────────────
 from extract_group import merge_flow_regions as _merge
 from _common import layout_model_for as _lmf

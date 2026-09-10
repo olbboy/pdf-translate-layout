@@ -24,7 +24,7 @@ import statistics
 from _common import BlockingError, Job, exit_blocking, load_json, save_json, utc_now
 
 STAGE = "context_graph"
-GRAPH_VERSION = "cg-1"
+GRAPH_VERSION = "cg-2"
 
 # Tiêu đề đánh số: "5.1.1  Safety Requirements". extract_group xếp chúng thành `list_item`
 # vì LIST_RE khớp "5." ở đầu, nên KHÔNG lọc được bằng region_type — phải regex trên chữ.
@@ -47,6 +47,8 @@ FLOW_MIN_WORDS = 4
 # Khe giữa hai dòng của MỘT nhãn so với chiều cao một dòng. Đo thật: cụm nhãn đúng ở Lite
 # p19 = 0.035; hai nhãn rời xếp chồng ở V16 p13 = 0.173 và 0.301. Ngưỡng 0.12 tách bạch.
 LABEL_STACK_GAP_RATIO = 0.12
+SAME_SOURCE_MIN_CHARS = 3
+SAME_SOURCE_MAX_CHARS = 80
 
 
 def soft_end(text: str) -> bool:
@@ -129,6 +131,34 @@ def co_figure_links(page_regs: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def same_source_groups(regions: list[dict], in_chain: set[str]) -> dict[str, list[str]]:
+    """Nhóm các region có CÙNG chữ nguồn (đã chuẩn hoá khoảng trắng), từ 2 region trở lên.
+
+    Loại region nằm trong chuỗi: so mảnh của một cụm nhiều dòng với một nhãn độc lập trùng
+    chữ sẽ báo oan — ca thật "Battery side" (mảnh của cụm "Battery side wall-mounted
+    bracket" ở p19) vs "Battery side" (nhãn độc lập ở p21); hai bản dịch khác nhau và cả
+    hai đều đúng.
+
+    KHÔNG lọc theo `translation_action`. Stage này chạy TRƯỚC translate_prep nên mọi region
+    còn mang `pending` do extract_group đặt, và điều kiện cũ (`!= "translate"`) khiến nhóm
+    LUÔN rỗng ở lần chạy đầu — `CONSISTENCY_DRIFT` ở stage 5 vì thế chưa từng chạy thật.
+    Bỏ điều kiện ấy cũng làm stage idempotent đúng như docstring hứa: chạy lại sau
+    translate_prep cho ra đúng nhóm như lần đầu. Bên tiêu thụ tự lọc — translate_prep chỉ
+    gộp region `translate`, lint nhất quán chỉ so region đã có bản dịch.
+
+    Ngưỡng độ dài tính bằng KÝ TỰ: dưới 3 là mảnh vụn không mang nghĩa, trên 80 thì trùng
+    hệt nhau là chuyện của đoạn văn lặp lại, không phải nhãn/tiêu đề dùng lại.
+    """
+    groups: dict[str, list[str]] = {}
+    for r in regions:
+        if r["region_id"] in in_chain:
+            continue
+        key = " ".join(r["source_text"].split())
+        if SAME_SOURCE_MIN_CHARS <= len(key) <= SAME_SOURCE_MAX_CHARS:
+            groups.setdefault(key, []).append(r["region_id"])
+    return {k: v for k, v in groups.items() if len(v) > 1}
+
+
 def build(job: Job) -> None:
     model = load_json(job.p("model", "regions.json"))
     if not model:
@@ -182,18 +212,8 @@ def build(job: Job) -> None:
             "kind": ("label_stack" if by_id[head]["region_type"] in LABEL_TYPES else "flow"),
         })
 
-    # same_source: chỉ so các node KHÔNG thuộc chuỗi nào. So mảnh của một cụm nhiều dòng với
-    # một nhãn độc lập trùng chữ sẽ báo oan — ca thật "Battery side" (mảnh của cụm ở p19) vs
-    # "Battery side" (nhãn độc lập ở p21), hai bản dịch khác nhau và cả hai đều đúng.
     in_chain = {rid for c in chains for rid in c["region_ids"]}
-    groups: dict[str, list[str]] = {}
-    for r in regions:
-        if r["region_id"] in in_chain or r.get("translation_action") != "translate":
-            continue
-        key = " ".join(r["source_text"].split())
-        if 3 <= len(key) <= 80:
-            groups.setdefault(key, []).append(r["region_id"])
-    same_source = {k: v for k, v in groups.items() if len(v) > 1}
+    same_source = same_source_groups(regions, in_chain)
 
     # under_heading: heading typed HOẶC heading đánh số (extract xếp nhầm thành list_item).
     sections: dict[str, str] = {}
