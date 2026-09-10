@@ -44,6 +44,13 @@ Key properties:
 - **Constraint-based fitting** — binary-search font sizing with a hard floor
   (85% of source size by default), word-boundary line breaking, explicit `\n`
   hard breaks, alignment preservation.
+- **One request per repeated region** — regions with identical source text share a
+  single translation, sized for the tightest container in the group. Fewer model
+  calls, and terminology drift between copies is structurally impossible. Every
+  copy is still verified independently by the gates.
+- **Model artifacts are rejected, not stripped** — a translation carrying a
+  reasoning tag, markdown fence, or `Here is the translation:` lead-in that the
+  source does not have fails validation instead of being silently cleaned up.
 - **Safe painting** — text-only redaction (`PDF_REDACT_IMAGE_NONE` /
   `LINE_ART_NONE`), no-fill masks that never touch kept text, link restoration,
   native font subsetting.
