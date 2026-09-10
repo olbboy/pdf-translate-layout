@@ -293,6 +293,11 @@ metadata:
 > trong khi stage 2.5 chạy TRƯỚC translate_prep, nên mọi region còn mang `pending` do
 > extract_group đặt và nhóm luôn rỗng — `CONSISTENCY_DRIFT` ở stage 5 vì thế là mã chết. Bỏ
 > điều kiện ấy (bên tiêu thụ tự lọc) cũng làm stage idempotent đúng như docstring hứa.
+> Bug này có giá đo được: chạy lại lint ngoại tuyến trên 4 job mẫu tìm ra **138 nhóm đang
+> mang nhiều bản dịch khác nhau cho cùng một chữ nguồn** — `ENGAGE` ra `KHỞI ĐỘNG`/`GẮN
+> KẾT`/`KHƠI GỢI`, `▶ Learn It` ra `▶ Học điều này`/`▶ Học nào`/`▶ Học`, `You need` ra
+> `Em cần`/`Bạn cần`. Toàn nhãn điều hướng in ở đầu mỗi bài, tức người đọc gặp cùng một mục
+> dưới hai ba cái tên. Từ 1.9.48 chúng dùng chung một request nên không tái diễn được.
 > (2) translate_prep phát MỘT request cho mỗi nhóm trùng, region còn lại mang `reuse_of`;
 > validate_responses chép bản dịch sang. Khoá gộp (`reuse_key`) đòi trùng cả **masked**,
 > **bảng placeholder**, **region_type**, **style_roles**, **số ô lưới** và **số ô trống** —
@@ -302,9 +307,19 @@ metadata:
 > đọc trước nhất: cả nhóm dùng chung một bản dịch nên nó phải vừa chỗ chật nhất, lấy khung
 > rộng thì mọi ô hẹp tụt dưới `minimum_ratio` và thành P0 `G4_RATIO_FLOOR`.
 > Gộp làm giảm số lần gọi model, **không** giảm số lần kiểm: bản chép nằm trong `regions.json`
-> như bản dịch thật nên Gate 1/2/3 vẫn soi từng region một. Đo trên job smoke 2 trang:
-> 8 region → 5 request, 7/7 gate pass. Việc gộp được nói ra ở phía prompt (`reused_by` +
-> `source_warnings`) để model không chọn cách diễn đạt bám vào ngữ cảnh một trang.
+> như bản dịch thật nên Gate 1/2/3 vẫn soi từng region một. Việc gộp được nói ra ở phía
+> prompt (`reused_by` + `source_warnings`) để model không chọn cách diễn đạt bám vào ngữ
+> cảnh một trang.
+> **Đo trên 4 job thật** (Macmillan Science G1–G4, 19.216 region, 17.348 cần dịch):
+> **3.682 region dùng chung bản dịch = 21,2%**, ổn định 20,3–22,4% cả bốn quyển; 17.348
+> request còn 13.666, tiết kiệm 3,1/15,9 MB prompt (19,2% ≈ 763k token đầu vào).
+> Khoá chặt loại 566 lượt gộp so với gộp thô theo chữ: tách vì `region_type` 372 lần,
+> vì `masked` 149 lần (đúng ca `"Max 48 V"` — gộp thô sẽ in `⟦MEAS_1⟧` lên 149 nhóm trang),
+> vì `style_roles` 19 lần. **Giữ `region_type` trong khoá** dù nới ra sẽ lên ~24,5%:
+> `heading` và `paragraph` cùng chữ nằm ở hai chế độ khung và `style_roles` khác nhau,
+> 3,3 điểm phần trăm không đáng đổi. Lấy khung chật nhất gần như không tốn gì — trên 839
+> nhóm, tỷ lệ rộng nhất/hẹp nhất có trung vị 1,00× (khung y hệt), p90 1,29×, chỉ 9 nhóm
+> (1,1%) chênh quá 2×. Job smoke 2 trang: 8 region → 5 request, 7/7 gate pass.
 > (3) Stage 5 thêm reject `LLM_ARTIFACT`: target mang thẻ suy luận (`<think>`), bao markdown
 > (```` ``` ````) hoặc câu dẫn (`Here is the translation:`) mà **source không có**. Người dịch
 > của skill này chính là một model suy luận nên đây là rủi ro thật; Gate 3 không bắt được vì
