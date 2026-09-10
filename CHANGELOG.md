@@ -14,6 +14,13 @@ versioning follows [SemVer](https://semver.org/).
   translation to the rest. Fewer model calls, and terminology drift between copies becomes
   structurally impossible instead of merely detected.
 
+  Measured on four real jobs (Macmillan *Science: A Closer Look* G1-G4, 19,216 regions,
+  17,348 of them translate-regions): **3,682 regions share a translation, 21.2% of the
+  regions that need one**, steady at 20.3-22.4% across all four books. 17,348 requests drop
+  to 13,666. Reusing each job's own `requests.jsonl` as the cost proxy, that is 3.1 of
+  15.9 MB of prompt payload, **19.2%, roughly 763k input tokens**, before counting the
+  output tokens for 3,682 translations that no longer have to be generated.
+
   The grouping key is deliberately stricter than "same text". Two regions share a
   translation only when the **masked** text, the **placeholder table**, the `region_type`,
   the `style_roles`, the spec-grid cell count and the fill-in blank count all match.
@@ -21,10 +28,22 @@ versioning follows [SemVer](https://semver.org/).
   in one group while masking differently — copying across them would leave a literal
   `⟦MEAS_1⟧` painted on the page.
 
+  That strictness costs 566 merges on the sample (4,248 raw text matches down to 3,682,
+  13%), and every field earns its place. Groups split by `region_type` 372 times, by the
+  masked text 149 times, by `style_roles` 19 times, and never by the grid or blank counts —
+  those two are for manuals, and the sample is textbooks. The 149 masked splits are exactly
+  the `"Max 48 V"` case: merging them would have painted a literal placeholder on 149
+  groups' worth of pages. `region_type` stays in the key even though relaxing it would lift
+  reuse to about 24.5%: a `heading` and a `paragraph` carrying the same words live under
+  different container and `style_roles` regimes, and 3.3 percentage points is not worth
+  sharing one translation across them.
+
   The representative is the region with the **smallest container**, not the first one in
   reading order. One translation serves the whole group, so it has to fit the tightest box;
   picking a wider one drops every narrow member below `fonts.minimum_ratio` and turns them
-  into non-waivable `G4_RATIO_FLOOR` P0s.
+  into non-waivable `G4_RATIO_FLOOR` P0s. Sizing for the tightest box costs almost nothing
+  in practice: across the sample's 839 groups the widest-to-narrowest container ratio has a
+  median of 1.00x (identical boxes), 1.29x at p90, and exceeds 2x in 9 groups (1.1%).
 
   Grouping reduces how often the model is called, **not** how often the result is checked:
   each copy lands in `regions.json` as a real translation, so Gate 1/2/3 still verify every
@@ -57,11 +76,36 @@ versioning follows [SemVer](https://semver.org/).
   groups as the first run. Consumers filter for themselves — stage 3 groups only
   `translate` regions, the lint compares only regions that have a translation.
 
+  The bug had a measurable cost. Re-running the lint offline over the four sample jobs finds
+  **138 groups that already carry more than one translation for the same source string** —
+  drift that shipped because nothing was looking. They are navigation labels printed at the
+  head of every lesson: `ENGAGE` appears as `KHỞI ĐỘNG`, `GẮN KẾT` and `KHƠI GỢI` in one
+  book; `▶ Learn It` as `▶ Học điều này`, `▶ Học nào` and `▶ Học`; `Draw Conclusions` as
+  both `Rút kết luận` and `Rút ra kết luận`; `You need` as both `Em cần` and `Bạn cần`.
+  A pupil meets the same section under a different name depending on the chapter. From
+  1.9.48 those regions share one request, so the drift cannot recur.
+
 ### Changed
 
 - `prompt_version` default `req-v1` → `req-v2` (request schema and agent instructions
   changed). `GRAPH_VERSION` `cg-1` → `cg-2`. Jobs that froze an earlier config keep their
   own values. No change to `region_id`, `source_hash`, or the layout model.
+
+### Verification
+
+- `selftest.py`: 488 cases pass, 15 of them new.
+- A two-page smoke job end to end: 8 regions to 5 requests, `validate` `ok=5 reused=3
+  fail=0 pending=0`, `fit_paint` `painted=8`, `qa_gates` `AUTO_QA_PASS` with 0 P0 and 0 P1.
+  A deliberately dirty run confirms the reject path: `<think>` and `Here is the
+  translation:` are both caught, and the regions that would copy from a rejected
+  representative stay pending rather than receiving a half-applied copy.
+- The reuse and drift figures above come from a read-only measurement: the four jobs'
+  stored `regions.json` and `context_graph.json` were loaded and the production functions
+  (`protect`, `classify_action`, `same_source_groups`, `build_reuse_map`, `reuse_key`) run
+  over them offline. No stage was executed against those jobs and nothing was written to
+  them. The sample is four textbooks from one publisher sharing a template, which is why
+  the reuse rate is so consistent; manuals and datasheets have a different repetition
+  profile and have not been measured.
 
 ## [1.9.47] - 2026-08-12
 
